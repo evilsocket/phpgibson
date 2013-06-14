@@ -1,2 +1,7 @@
 build
-
+.libs
+.libs/*.*
+*.o
+*.la
+*.lo
+*.so
