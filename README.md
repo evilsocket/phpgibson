@@ -1,4 +1,4 @@
-PHP Gibson Client [![Build Status](https://secure.travis-ci.org/evilsocket/phpgibson.png)](http://travis-ci.org/evilsocket/phpgibson)
+PHP Gibson Client
 ===
 
 Gibson is a high efficiency, tree based memory cache server. It is not meant to replace a database, since it was written to be a key-value store to be used as a cache server, but it's not the usual cache server.
