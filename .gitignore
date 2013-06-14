@@ -28,3 +28,5 @@ mkinstalldirs
 modules
 run-tests.php
 autom4te.cache
+.project
+.cproject
