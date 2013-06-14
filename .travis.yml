@@ -1,0 +1,4 @@
+language: c
+compiler:
+  - gcc
+script: phpize && ./configure --enable-gibson && make
