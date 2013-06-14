@@ -12,6 +12,7 @@ Compilation / Installation
 In order to compile gibson, you will need cmake and autotools installed, then:
 
     $ cd /path/to/phpgibson-source/
+    $ phpize
     $ ./configure
     $ make
     # make install

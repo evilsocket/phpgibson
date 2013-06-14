@@ -6,7 +6,6 @@ Makefile
 Makefile.fragments
 Makefile.global
 Makefile.objects
-*.tgz
 acinclude.m4
 aclocal.m4
 build
@@ -20,8 +19,6 @@ config.status
 config.sub
 configure
 configure.in
-conftest
-conftest.c
 include
 install-sh
 libtool
@@ -29,6 +26,5 @@ ltmain.sh
 missing
 mkinstalldirs
 modules
-sm.php
 run-tests.php
 autom4te.cache
