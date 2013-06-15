@@ -312,7 +312,7 @@ PHP_METHOD(Gibson, connect)
 }
 
 #define PHP_GIBSON_RETURN_REPLY() if( sock->reply.encoding == GB_ENC_PLAIN ){ \
-									RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 0); \
+									RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 1); \
 								  } \
 								  else if( sock->reply.encoding == GB_ENC_NUMBER ){ \
 									  RETURN_LONG( gb_reply_number(sock) ); \
