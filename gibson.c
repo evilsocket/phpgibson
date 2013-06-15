@@ -311,6 +311,16 @@ PHP_METHOD(Gibson, connect)
 	}
 }
 
+#define PHP_GIBSON_RETURN_REPLY() if( sock->reply.encoding == GB_ENC_PLAIN ){ \
+									RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 0); \
+								  } \
+								  else if( sock->reply.encoding == GB_ENC_NUMBER ){ \
+									  RETURN_LONG( gb_reply_number(sock) ); \
+								  } \
+								  else { \
+									  RETURN_FALSE; \
+								  }
+
 PHP_METHOD(Gibson, set)
 {
 	zval *object;
@@ -331,7 +341,7 @@ PHP_METHOD(Gibson, set)
 	if( gb_set( sock, key, key_len, val, val_len, expire ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, mset)
@@ -354,7 +364,7 @@ PHP_METHOD(Gibson, mset)
 	if( gb_mset( sock, key, key_len, val, val_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, ttl)
@@ -400,7 +410,7 @@ PHP_METHOD(Gibson, mttl)
 	if( gb_ttl( sock, key, key_len, expire ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, get)
@@ -421,14 +431,7 @@ PHP_METHOD(Gibson, get)
 	if( gb_get( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	if( sock->reply.encoding == GB_ENC_PLAIN ){
-		RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 0);
-	}
-	else if( sock->reply.encoding == GB_ENC_NUMBER ){
-		RETURN_LONG( gb_reply_number(sock) );
-	}
-
-	RETURN_FALSE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, mget)
@@ -505,7 +508,7 @@ PHP_METHOD(Gibson, mdel)
 	if( gb_mdel( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, inc)
@@ -526,7 +529,7 @@ PHP_METHOD(Gibson, inc)
 	if( gb_inc( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_LONG( gb_reply_number(sock) );
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, minc)
@@ -547,7 +550,7 @@ PHP_METHOD(Gibson, minc)
 	if( gb_minc( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, dec)
@@ -568,7 +571,7 @@ PHP_METHOD(Gibson, dec)
 	if( gb_dec( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_LONG( gb_reply_number(sock) );
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, mdec)
@@ -589,7 +592,7 @@ PHP_METHOD(Gibson, mdec)
 	if( gb_mdec( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, lock)
@@ -635,7 +638,7 @@ PHP_METHOD(Gibson, mlock)
 	if( gb_mlock( sock, key, key_len, time ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, unlock)
@@ -677,7 +680,7 @@ PHP_METHOD(Gibson, munlock)
 	if( gb_munlock( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_TRUE;
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, count)
@@ -698,7 +701,7 @@ PHP_METHOD(Gibson, count)
 	if( gb_count( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
-	RETURN_LONG( gb_reply_number(sock) );
+	PHP_GIBSON_RETURN_REPLY();
 }
 
 PHP_METHOD(Gibson, stats)
