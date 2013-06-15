@@ -281,7 +281,7 @@ PHP_METHOD(Gibson, getLastError) {
 	{
 		case REPL_ERR 	        : RETURN_STRING( "Generic error.", 1 );
 		case REPL_ERR_NOT_FOUND : RETURN_STRING( "Invalid key, item not found", 1 );
-		case REPL_ERR_NAN		    : RETURN_STRING( "Invalid value, not a number", 1 );
+		case REPL_ERR_NAN		: RETURN_STRING( "Invalid value, not a number", 1 );
 		case REPL_ERR_MEM       : RETURN_STRING( "Gibson server is out of memory", 1 );
 		case REPL_ERR_LOCKED    : RETURN_STRING( "The item is locked", 1 );
 
