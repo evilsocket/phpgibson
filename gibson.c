@@ -130,26 +130,18 @@ PHP_MINIT_FUNCTION(gibson)
 	return SUCCESS;
 }
 
-int gibson_sock_get(zval *id, gbClient **sock TSRMLS_DC, int no_throw)
+int gibson_sock_get(zval *id, gbClient **sock TSRMLS_DC)
 {
 	zval **socket;
 	int resource_type;
 
 	if (Z_TYPE_P(id) != IS_OBJECT || zend_hash_find(Z_OBJPROP_P(id), "socket", sizeof("socket"), (void **) &socket) == FAILURE) {
-		// Throw an exception unless we've been requested not to
-		if(!no_throw) {
-			PHP_GIBSON_EXCEPTION("Gibson server gone away");
-		}
 		return -1;
 	}
 
 	*sock = (gbClient *) zend_list_find(Z_LVAL_PP(socket), &resource_type);
 
 	if (!*sock || resource_type != le_gibson_sock) {
-		// Throw an exception unless we've been requested not to
-		if(!no_throw) {
-			PHP_GIBSON_EXCEPTION("Gibson server gone away");
-		}
 		return -1;
 	}
 
@@ -191,7 +183,7 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS) {
 	}
 
 	/* if there is a gibson sock already we have to remove it from the list */
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) > 0) {
+	if (gibson_sock_get(object, &sock TSRMLS_CC) > 0) {
 		if (zend_hash_find(Z_OBJPROP_P(object), "socket",sizeof("socket"), (void **) &socket) == FAILURE) {
 			/* maybe there is a socket but the id isn't known.. what to do? */
 		} else {
@@ -274,7 +266,7 @@ PHP_METHOD(Gibson, getLastError) {
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	switch( sock->error )
@@ -297,7 +289,7 @@ PHP_METHOD(Gibson,__destruct) {
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(getThis(), &sock TSRMLS_CC, 1) < 0) {
+	if (gibson_sock_get(getThis(), &sock TSRMLS_CC) < 0) {
 		RETURN_FALSE;
 	}
 }
@@ -335,7 +327,7 @@ PHP_METHOD(Gibson, set)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_set( sock, key, key_len, val, val_len, expire ) != 0 )
@@ -358,7 +350,7 @@ PHP_METHOD(Gibson, mset)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_mset( sock, key, key_len, val, val_len ) != 0 )
@@ -381,7 +373,7 @@ PHP_METHOD(Gibson, ttl)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_ttl( sock, key, key_len, expire ) != 0 )
@@ -404,7 +396,7 @@ PHP_METHOD(Gibson, mttl)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_ttl( sock, key, key_len, expire ) != 0 )
@@ -425,7 +417,7 @@ PHP_METHOD(Gibson, get)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_get( sock, key, key_len ) != 0 )
@@ -447,7 +439,7 @@ PHP_METHOD(Gibson, mget)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_mget( sock, key, key_len ) != 0 )
@@ -481,7 +473,7 @@ PHP_METHOD(Gibson, del)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_del( sock, key, key_len ) != 0 )
@@ -502,7 +494,7 @@ PHP_METHOD(Gibson, mdel)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_mdel( sock, key, key_len ) != 0 )
@@ -523,7 +515,7 @@ PHP_METHOD(Gibson, inc)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_inc( sock, key, key_len ) != 0 )
@@ -544,7 +536,7 @@ PHP_METHOD(Gibson, minc)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_minc( sock, key, key_len ) != 0 )
@@ -565,7 +557,7 @@ PHP_METHOD(Gibson, dec)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_dec( sock, key, key_len ) != 0 )
@@ -586,7 +578,7 @@ PHP_METHOD(Gibson, mdec)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_mdec( sock, key, key_len ) != 0 )
@@ -609,7 +601,7 @@ PHP_METHOD(Gibson, lock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_lock( sock, key, key_len, time ) != 0 )
@@ -632,7 +624,7 @@ PHP_METHOD(Gibson, mlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_mlock( sock, key, key_len, time ) != 0 )
@@ -653,7 +645,7 @@ PHP_METHOD(Gibson, unlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_unlock( sock, key, key_len ) != 0 )
@@ -674,7 +666,7 @@ PHP_METHOD(Gibson, munlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_munlock( sock, key, key_len ) != 0 )
@@ -695,7 +687,7 @@ PHP_METHOD(Gibson, count)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_count( sock, key, key_len ) != 0 )
@@ -715,7 +707,7 @@ PHP_METHOD(Gibson, stats)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_stats( sock ) != 0 ) {
@@ -747,7 +739,7 @@ PHP_METHOD(Gibson, quit)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC, 0) < 0)
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
 	if( gb_quit( sock ) != 0 )
