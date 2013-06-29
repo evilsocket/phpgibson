@@ -399,7 +399,7 @@ PHP_METHOD(Gibson, mttl)
 	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
-	if( gb_ttl( sock, key, key_len, expire ) != 0 )
+	if( gb_mttl( sock, key, key_len, expire ) != 0 )
 		RETURN_FALSE;
 
 	PHP_GIBSON_RETURN_REPLY();
