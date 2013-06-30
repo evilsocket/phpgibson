@@ -64,6 +64,7 @@ static zend_function_entry gibson_functions[] = {
 	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
 
 	{NULL, NULL, NULL}
@@ -728,6 +729,24 @@ PHP_METHOD(Gibson, stats)
 	}
 
 	gb_reply_multi_free(&mb);
+}
+
+PHP_METHOD(Gibson, ping)
+{
+	zval *object;
+	gbClient *sock;
+
+	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
+		RETURN_FALSE;
+
+	if( gb_ping( sock ) != 0 )
+		RETURN_FALSE;
+
+	RETURN_TRUE;
 }
 
 PHP_METHOD(Gibson, quit)

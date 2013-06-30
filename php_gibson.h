@@ -56,6 +56,7 @@ PHP_METHOD(Gibson, unlock);
 PHP_METHOD(Gibson, munlock);
 PHP_METHOD(Gibson, count);
 PHP_METHOD(Gibson, stats);
+PHP_METHOD(Gibson, ping);
 PHP_METHOD(Gibson, quit);
 
 PHP_MINIT_FUNCTION(gibson);

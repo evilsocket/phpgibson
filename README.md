@@ -139,6 +139,7 @@ _**Description**_: Disconnects from the Gibson instance.
 1. [munlock](#munlock) - Remove the lock on keys verifying the given expression.
 1. [count](#count) - Count items for a given expression.
 1. [stats](#stats) - Get system stats about the Gibson instance.
+1. [ping](#stats) - Ping the server instance to refresh client last seen timestamp.
 
 ### getLastError
 -----
@@ -456,5 +457,20 @@ Array
     [memory_peak] => 1772
     [item_size_avg] => 1772
 )
+~~~
+
+### ping
+-----
+_**Description**_: Ping the server instance to refresh client last seen timestamp.
+
+##### *Parameters*
+None
+
+##### *Return value*
+*BOOL* `TRUE` in case of success, `FALSE` in case of failure.
+
+##### *Example*
+~~~
+$gibson->ping(); 
 ~~~
 
