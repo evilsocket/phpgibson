@@ -139,7 +139,7 @@ _**Description**_: Disconnects from the Gibson instance.
 1. [munlock](#munlock) - Remove the lock on keys verifying the given expression.
 1. [count](#count) - Count items for a given expression.
 1. [stats](#stats) - Get system stats about the Gibson instance.
-1. [ping](#stats) - Ping the server instance to refresh client last seen timestamp.
+1. [ping](#ping) - Ping the server instance to refresh client last seen timestamp.
 
 ### getLastError
 -----
