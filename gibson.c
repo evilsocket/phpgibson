@@ -63,6 +63,9 @@ static zend_function_entry gibson_functions[] = {
 	PHP_ME(Gibson, unlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, sizeof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, msizeof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, encof, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
@@ -127,6 +130,10 @@ PHP_MINIT_FUNCTION(gibson)
 	add_constant_long(gibson_ce, "REPL_OK", REPL_OK);
 	add_constant_long(gibson_ce, "REPL_VAL", REPL_VAL);
 	add_constant_long(gibson_ce, "REPL_KVAL", REPL_KVAL);
+
+	add_constant_long(gibson_ce, "ENC_PLAIN", GB_ENC_PLAIN);
+	add_constant_long(gibson_ce, "ENC_NUMBER", GB_ENC_NUMBER);
+	add_constant_long(gibson_ce, "ENC_LZF", GB_ENC_LZF);
 
 	return SUCCESS;
 }
@@ -692,6 +699,69 @@ PHP_METHOD(Gibson, count)
 		RETURN_FALSE;
 
 	if( gb_count( sock, key, key_len ) != 0 )
+		RETURN_FALSE;
+
+	PHP_GIBSON_RETURN_REPLY();
+}
+
+PHP_METHOD(Gibson, sizeof)
+{
+	zval *object;
+	gbClient *sock;
+	char *key = NULL;
+	int key_len;
+
+	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os",
+			&object, gibson_ce, &key, &key_len ) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
+		RETURN_FALSE;
+
+	if( gb_sizeof( sock, key, key_len ) != 0 )
+		RETURN_FALSE;
+
+	PHP_GIBSON_RETURN_REPLY();
+}
+
+PHP_METHOD(Gibson, msizeof)
+{
+	zval *object;
+	gbClient *sock;
+	char *key = NULL;
+	int key_len;
+
+	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os",
+			&object, gibson_ce, &key, &key_len ) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
+		RETURN_FALSE;
+
+	if( gb_msizeof( sock, key, key_len ) != 0 )
+		RETURN_FALSE;
+
+	PHP_GIBSON_RETURN_REPLY();
+}
+
+PHP_METHOD(Gibson, encof)
+{
+	zval *object;
+	gbClient *sock;
+	char *key = NULL;
+	int key_len;
+
+	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os",
+			&object, gibson_ce, &key, &key_len ) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
+		RETURN_FALSE;
+
+	if( gb_encof( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
 
 	PHP_GIBSON_RETURN_REPLY();

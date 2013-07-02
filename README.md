@@ -138,6 +138,9 @@ _**Description**_: Disconnects from the Gibson instance.
 1. [unlock](#unlock) - Remove the lock on a given key.
 1. [munlock](#munlock) - Remove the lock on keys verifying the given expression.
 1. [count](#count) - Count items for a given expression.
+1. [sizeof](#sizeof) - Return the size of the value with the given key, if the value is LZF encoded its compressed size is returned.
+1. [msizeof](#msizeof) - Return the total size of values for the given expression, if one or more values are LZF encoded their compressed size is returned.
+1. [encof](#encof) - Return the encoding of the value with the given key.
 1. [stats](#stats) - Get system stats about the Gibson instance.
 1. [ping](#ping) - Ping the server instance to refresh client last seen timestamp.
 
@@ -424,6 +427,58 @@ _**Description**_: Count items for a given expression.
 ##### *Example*
 ~~~
 $gibson->count( 'f' ); // Count every f* key
+~~~
+
+### sizeof
+-----
+_**Description**_: Return the size of the value with the given key, if the value is LZF encoded its compressed size is returned.
+
+##### *Parameters*
+*key* (string) The key of the value to search.
+
+##### *Return value*
+*Mixed* An integer with the size in case of success, `FALSE` in case of failure.
+
+##### *Example*
+~~~
+$gibson->set( 'foo', 'bar' );
+
+echo $gibson->sizeof('foo')."\n"; // will print 3
+~~~
+
+### msizeof
+-----
+_**Description**_: Return the total size of values for the given expression, if one or more values are LZF encoded their compressed size is returned.
+
+##### *Parameters*
+*key* (string) The key prefix to use as expression.
+
+##### *Return value*
+*Mixed* An integer with the total size in case of success, `FALSE` in case of failure.
+
+##### *Example*
+~~~
+$gibson->set( 'foo', 'bar' );
+$gibson->set( 'fu', 'kung' );
+
+echo $gibson->msizeof('f')."\n"; // will print 7
+~~~
+
+### encof
+-----
+_**Description**_: Return the encoding of the value with the given key ( can be `Gibson::ENC_PLAIN` for strings, `Gibson::ENC_NUMBER` for numbers and `Gibson::ENC_LZF` for LZF compressed items ).
+
+##### *Parameters*
+*key* (string) The key of the value to search.
+
+##### *Return value*
+*Mixed* An integer with the encoding in case of success, `FALSE` in case of failure.
+
+##### *Example*
+~~~
+$gibson->set( 'foo', 'bar' );
+
+echo $gibson->encof('foo')."\n"; // will print 0 which is `Gibson::ENC_PLAIN`
 ~~~
 
 ### stats
