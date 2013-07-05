@@ -88,6 +88,7 @@ $gb = new Gibson();
 ## Connection
 
 1. [connect](#connect) - Connect to a server
+1. [pconnect](#pconnect) - Create a persistent connection or reuse a previous one if present.
 1. [quit](#quit) - Close the connection
 
 ### connect
@@ -111,6 +112,30 @@ $gibson->connect('127.0.0.1', 10128);
 $gibson->connect('127.0.0.1'); // port 10128 by default
 $gibson->connect('127.0.0.1', 10128, 200); // 200 ms timeout.
 $gibson->connect('/tmp/gibson.sock'); // unix domain socket.
+~~~
+
+### pconnect
+-----
+_**Description**_: Create a persistent connection or reuse a previous one if present. If a previous connection exists but
+is not valid ( timed out, disconnected, etc ) the connection will be enstablished again.
+
+##### *Parameters*
+
+*host*: string. can be a host, or the path to a unix domain socket  
+*port*: int, optional  
+*timeout*: float, value in milli seconds (optional, default is 0 meaning unlimited)  
+
+##### *Return value*
+
+*BOOL*: `TRUE` on success, `FALSE` on error.
+
+##### *Example*
+
+~~~
+$gibson->pconnect('127.0.0.1', 10128);
+$gibson->pconnect('127.0.0.1'); // port 10128 by default
+$gibson->pconnect('127.0.0.1', 10128, 200); // 200 ms timeout.
+$gibson->pconnect('/tmp/gibson.sock'); // unix domain socket.
 ~~~
 
 ### quit

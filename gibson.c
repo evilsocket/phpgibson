@@ -34,10 +34,12 @@
 #include <gibson.h>
 
 int le_gibson_sock;
+int le_gibson_psock;
 
 zend_class_entry *gibson_ce;
 
 static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC);
+static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC);
 
 ZEND_DECLARE_MODULE_GLOBALS(gibson)
 
@@ -46,6 +48,7 @@ static zend_function_entry gibson_functions[] = {
 	PHP_ME(Gibson, __destruct, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, getLastError, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, connect, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, pconnect, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, set, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, mset, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, ttl, NULL, ZEND_ACC_PUBLIC)
@@ -122,6 +125,13 @@ PHP_MINIT_FUNCTION(gibson)
 		module_number
 	);
 
+	le_gibson_psock = zend_register_list_destructors_ex(
+		NULL,
+        gibson_psocket_destructor,
+		PHP_GIBSON_SOCK_NAME,
+		module_number
+	);
+
 	add_constant_long(gibson_ce, "REPL_ERR", REPL_ERR);
 	add_constant_long(gibson_ce, "REPL_ERR_NOT_FOUND", REPL_ERR_NOT_FOUND);
 	add_constant_long(gibson_ce, "REPL_ERR_NAN", REPL_ERR_NAN);
@@ -142,14 +152,14 @@ int gibson_sock_get(zval *id, gbClient **sock TSRMLS_DC)
 {
 	zval **socket;
 	int resource_type;
-
+    
 	if (Z_TYPE_P(id) != IS_OBJECT || zend_hash_find(Z_OBJPROP_P(id), "socket", sizeof("socket"), (void **) &socket) == FAILURE) {
 		return -1;
 	}
 
 	*sock = (gbClient *) zend_list_find(Z_LVAL_PP(socket), &resource_type);
 
-	if (!*sock || resource_type != le_gibson_sock) {
+	if (!*sock || ( resource_type != le_gibson_sock && resource_type != le_gibson_psock ) ) {
 		return -1;
 	}
 
@@ -165,17 +175,37 @@ static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 	efree(sock);
 }
 
-PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS) {
+static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
+{
+	gbClient *sock = (gbClient *)rsrc->ptr;
+
+    gb_disconnect(sock TSRMLS_CC);
+
+	pefree(sock,1);
+}
+
+static void gibson_socket_pid( char *address, int port, int timeout, char **pkey, int *pkey_len ){
+    // unix domain socket
+    if( address[0] == '/' || address[0] == '.' ){
+        *pkey_len = spprintf( &( *pkey ), 0, "phpgibson_%s_%d", address, timeout );
+    }
+    // tcp socket
+    else {
+        *pkey_len = spprintf( &( *pkey ), 0, "phpgibson_%s_%d_%d", address, port, timeout );
+    }
+}
+
+PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 	zval *object;
 	zval **socket;
-	int host_len, id, ret;
-	char *host = NULL;
+	int host_len, id, ret, pkey_len = 0;
+	char *host = NULL, *pkey = NULL;
 	long port = -1;
-
-	double timeout = 100.0;
+    zend_rsrc_list_entry *le, new_le;
+	long timeout = 100;
 	gbClient *sock  = NULL;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os|ld",
+	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os|ll",
 			&object, gibson_ce, &host, &host_len, &port,
 			&timeout ) == FAILURE) {
 		return FAILURE;
@@ -190,39 +220,98 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS) {
 		port = 10128;
 	}
 
-	/* if there is a gibson sock already we have to remove it from the list */
-	if (gibson_sock_get(object, &sock TSRMLS_CC) > 0) {
-		if (zend_hash_find(Z_OBJPROP_P(object), "socket",sizeof("socket"), (void **) &socket) == FAILURE) {
-			/* maybe there is a socket but the id isn't known.. what to do? */
-		} else {
-			zend_list_delete(Z_LVAL_PP(socket)); /* the refcount should be decreased and the detructor called */
-		}
-	} else {
-		zend_clear_exception(TSRMLS_C); /* clear exception triggered by non-existent socket during connect(). */
-	}
+    if( persistent ){
+        gibson_socket_pid( host, port, timeout, &pkey, &pkey_len );
+        
+        // search for persistent connections
+        if( zend_hash_find( &EG(persistent_list), pkey, pkey_len + 1, (void **)&le ) == SUCCESS) {
+            sock = le->ptr;
+            // Make sure the socket is connected ( with a PING command )
+            if( gb_ping( sock ) != 0 ){
+                if( host[0] == '/' || host[0] == '.' ){
+                    ret = gb_unix_connect( sock, host, timeout );
+                }
+                else {
+                    ret = gb_tcp_connect( sock, host, port, timeout );
+                }
 
-	sock = ecalloc(1, sizeof(gbClient));
+                if( ret != 0 ) {
+                    efree(pkey);
+                    return FAILURE;
+                }
+            }
+        }
+        // no connection created with this persistence key yet
+        else {
+            sock = pecalloc( 1, sizeof(gbClient), 1 );
+            
+            if( host[0] == '/' || host[0] == '.' ){
+                ret = gb_unix_connect( sock, host, timeout );
+            }
+            else {
+                ret = gb_tcp_connect( sock, host, port, timeout );
+            }
 
-	if( host[0] == '/' ){
-		ret = gb_unix_connect( sock, host, timeout );
-	}
-	else {
-		ret = gb_tcp_connect( sock, host, port, timeout );
-	}
+            if( ret != 0 ) {
+                efree(pkey);
+                pefree(sock,1);
+                return FAILURE;
+            }
+            
+            // store the reference
+            new_le.ptr = sock;
+            new_le.type = le_gibson_psock;
 
-	if( ret != 0 ) {
-		efree(sock);
-		return FAILURE;
-	}
+            zend_hash_add( &EG(persistent_list), pkey, pkey_len + 1, &new_le, sizeof(zend_rsrc_list_entry), NULL );
 
-	#if PHP_VERSION_ID >= 50400
-	id = zend_list_insert(sock, le_gibson_sock TSRMLS_CC);
-	#else
-	id = zend_list_insert(sock, le_gibson_sock);
-	#endif
-	add_property_resource(object, "socket", id);
+            #if PHP_VERSION_ID >= 50400
+            id = zend_list_insert(sock, le_gibson_psock TSRMLS_CC);
+            #else
+            id = zend_list_insert(sock, le_gibson_psock);
+            #endif
+            add_property_resource(object, "socket", id);
+        }
 
-	return SUCCESS;
+        efree(pkey);
+        return SUCCESS;
+    }
+    // non persistent connection
+    else {
+        /* if there is a gibson sock already we have to remove it from the list */
+        if (gibson_sock_get(object, &sock TSRMLS_CC) > 0) {
+            if (zend_hash_find(Z_OBJPROP_P(object), "socket",sizeof("socket"), (void **) &socket) == FAILURE) {
+                /* maybe there is a socket but the id isn't known.. what to do? */
+            } else {
+                zend_list_delete(Z_LVAL_PP(socket)); /* the refcount should be decreased and the detructor called */
+            }
+        } else {
+            zend_clear_exception(TSRMLS_C); /* clear exception triggered by non-existent socket during connect(). */
+        }
+
+        sock = ecalloc(1, sizeof(gbClient));
+
+        if( host[0] == '/' || host[0] == '.' ){
+            ret = gb_unix_connect( sock, host, timeout );
+        }
+        else {
+            ret = gb_tcp_connect( sock, host, port, timeout );
+        }
+
+        if( ret != 0 ) {
+            efree(sock);
+            return FAILURE;
+        }
+
+        #if PHP_VERSION_ID >= 50400
+        id = zend_list_insert(sock, le_gibson_sock TSRMLS_CC);
+        #else
+        id = zend_list_insert(sock, le_gibson_sock);
+        #endif
+        add_property_resource(object, "socket", id);
+        
+
+	    return SUCCESS;
+    }
 }
 
 /**
@@ -304,7 +393,16 @@ PHP_METHOD(Gibson,__destruct) {
 
 PHP_METHOD(Gibson, connect)
 {
-	if (gibson_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU) == FAILURE) {
+	if ( gibson_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0 ) == FAILURE) {
+		RETURN_FALSE;
+	} else {
+		RETURN_TRUE;
+	}
+}
+
+PHP_METHOD(Gibson, pconnect)
+{
+	if ( gibson_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1 ) == FAILURE) {
 		RETURN_FALSE;
 	} else {
 		RETURN_TRUE;
@@ -827,11 +925,11 @@ PHP_METHOD(Gibson, quit)
 	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
 		RETURN_FALSE;
 	}
-
+    
 	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
 		RETURN_FALSE;
 
-	if( gb_quit( sock ) != 0 )
+    if( gb_quit( sock ) != 0 )
 		RETURN_FALSE;
 
 	RETURN_TRUE;

@@ -38,6 +38,7 @@ PHP_METHOD(Gibson, __construct);
 PHP_METHOD(Gibson, __destruct);
 PHP_METHOD(Gibson, getLastError);
 PHP_METHOD(Gibson, connect);
+PHP_METHOD(Gibson, pconnect);
 PHP_METHOD(Gibson, set);
 PHP_METHOD(Gibson, mset);
 PHP_METHOD(Gibson, ttl);
