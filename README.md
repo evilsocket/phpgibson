@@ -142,7 +142,6 @@ $gibson->pconnect('/tmp/gibson.sock'); // unix domain socket.
 -----
 _**Description**_: Disconnects from the Gibson instance.
 
-
 ## Methods
 
 1. [getLastError](#getLastError) - If an error occurred, return its human readable description.

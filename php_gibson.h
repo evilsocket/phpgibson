@@ -32,8 +32,6 @@
 #define PHP_GIBSON_EXTNAME "gibson"
 #define PHP_GIBSON_SOCK_NAME "Gibson Socket Buffer"
 
-#define PHP_GIBSON_EXCEPTION(msg) zend_throw_exception(zend_exception_get_default(TSRMLS_C), msg, 0 TSRMLS_CC)
-
 PHP_METHOD(Gibson, __construct);
 PHP_METHOD(Gibson, __destruct);
 PHP_METHOD(Gibson, getLastError);

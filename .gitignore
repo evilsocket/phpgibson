@@ -1,3 +1,5 @@
+*.swp
+tags
 .settings
 .deps
 *.lo

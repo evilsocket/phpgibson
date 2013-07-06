@@ -33,6 +33,12 @@
 #include "php_gibson.h"
 #include <gibson.h>
 
+typedef struct {
+  int id;
+  gbClient *socket;
+}
+gbContext;
+
 int le_gibson_sock;
 int le_gibson_psock;
 
@@ -97,7 +103,7 @@ zend_module_entry gibson_module_entry = {
 ZEND_GET_MODULE(gibson)
 #endif
 
-void add_constant_long(zend_class_entry *ce, char *name, int value) {
+static void add_constant_long(zend_class_entry *ce, char *name, int value) {
 	zval *constval;
 
 	constval = pemalloc(sizeof(zval), 1);
@@ -148,45 +154,56 @@ PHP_MINIT_FUNCTION(gibson)
 	return SUCCESS;
 }
 
-int gibson_sock_get(zval *id, gbClient **sock TSRMLS_DC)
-{
-	zval **socket;
-	int resource_type;
-    
-	if (Z_TYPE_P(id) != IS_OBJECT || zend_hash_find(Z_OBJPROP_P(id), "socket", sizeof("socket"), (void **) &socket) == FAILURE) {
-		return -1;
-	}
-
-	*sock = (gbClient *) zend_list_find(Z_LVAL_PP(socket), &resource_type);
-
-	if (!*sock || ( resource_type != le_gibson_sock && resource_type != le_gibson_psock ) ) {
-		return -1;
-	}
-
-	return Z_LVAL_PP(socket);
-}
-
 static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 {
-	gbClient *sock = (gbClient *)rsrc->ptr;
+	gbContext *ctx = (gbContext *)rsrc->ptr;
 
-	gb_disconnect(sock TSRMLS_CC);
+	gb_disconnect(ctx->socket TSRMLS_CC);
 
-	efree(sock);
+	efree(ctx->socket);
+    efree(ctx);
 }
 
 static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 {
-	gbClient *sock = (gbClient *)rsrc->ptr;
+	gbContext *ctx = (gbContext *)rsrc->ptr;
 
-    gb_disconnect(sock TSRMLS_CC);
+	gb_disconnect(ctx->socket TSRMLS_CC);
 
-	pefree(sock,1);
+	pefree(ctx->socket,1);
+    pefree(ctx,1);
 }
 
+// retrieve the socket property by object id
+#define GET_SOCKET_RESOURCE(s) {\
+    zval **_tmp_zval;\
+    gbContext *ctx;\
+    if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket",\
+                sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {\
+        RETURN_FALSE;\
+    }\
+\
+    ZEND_FETCH_RESOURCE2( ctx, gbContext *, _tmp_zval, -1,\
+            "socket", le_gibson_sock, le_gibson_psock );\
+\
+    (s) = ctx->socket;\
+}\
+
+#define GB_IS_UNIX_SOCKET( host ) ( (host)[0] == '/' || (host)[0] == '.' ) 
+
+
+
+#define GB_SOCK_CONNECT( ret, sock, host, port, timeout ) if( GB_IS_UNIX_SOCKET(host) ){\
+                                                            (ret) = gb_unix_connect( (sock), (host), (timeout) );\
+                                                          }\
+                                                          else {\
+                                                            (ret) = gb_tcp_connect( (sock), (host), (port), (timeout) );\
+                                                          }
+
+// get a persistent socket identifier
 static void gibson_socket_pid( char *address, int port, int timeout, char **pkey, int *pkey_len ){
     // unix domain socket
-    if( address[0] == '/' || address[0] == '.' ){
+    if( GB_IS_UNIX_SOCKET(address) ){
         *pkey_len = spprintf( &( *pkey ), 0, "phpgibson_%s_%d", address, timeout );
     }
     // tcp socket
@@ -197,79 +214,78 @@ static void gibson_socket_pid( char *address, int port, int timeout, char **pkey
 
 PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 	zval *object;
-	zval **socket;
 	int host_len, id, ret, pkey_len = 0;
 	char *host = NULL, *pkey = NULL;
 	long port = -1;
     zend_rsrc_list_entry *le, new_le;
 	long timeout = 100;
-	gbClient *sock  = NULL;
+	gbClient *sock = NULL;
+    gbContext *ctx = NULL;
+    int type;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os|ll",
-			&object, gibson_ce, &host, &host_len, &port,
-			&timeout ) == FAILURE) {
+	if( zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os|ll", &object, gibson_ce, &host, &host_len, &port, &timeout ) == FAILURE) {
 		return FAILURE;
 	}
-
-	if (timeout < 0L || timeout > INT_MAX) {
-		PHP_GIBSON_EXCEPTION("Invalid timeout");
+    else if( host_len == 0 ){
+        return FAILURE;
+    }
+    else if( timeout < 0L || timeout > INT_MAX ){
 		return FAILURE;
 	}
-
-	if(port == -1 && host_len && host[0] != '/') { /* not unix socket, set to default value */
-		port = 10128;
+    // not unix socket, set to default value
+    else if( port == -1 && host_len && GB_IS_UNIX_SOCKET(host) == 0 ) { 		
+        port = 10128;
 	}
 
-    if( persistent ){
+    if( persistent )
+    {
         gibson_socket_pid( host, port, timeout, &pkey, &pkey_len );
         
         // search for persistent connections
         if( zend_hash_find( &EG(persistent_list), pkey, pkey_len + 1, (void **)&le ) == SUCCESS) {
-            sock = le->ptr;
-            // Make sure the socket is connected ( with a PING command )
-            if( gb_ping( sock ) != 0 ){
-                if( host[0] == '/' || host[0] == '.' ){
-                    ret = gb_unix_connect( sock, host, timeout );
-                }
-                else {
-                    ret = gb_tcp_connect( sock, host, port, timeout );
-                }
+            ctx = le->ptr;
 
+            // sanity check to ensure that the resource is still a regular resource number
+            if (zend_list_find(ctx->id, &type) == ctx) {
+                // add a reference to the persistent movie 
+                zend_list_addref(ctx->id);
+            } else {
+                // php_error_docref(NULL TSRMLS_CC, E_ERROR,"Not a valid persistent socket resource");
+                ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock );
+            }
+
+            // Make sure the socket is connected ( with a PING command )
+            if( gb_ping( ctx->socket ) != 0 ){
+                GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );
                 if( ret != 0 ) {
                     efree(pkey);
                     return FAILURE;
                 }
             }
+
+            add_property_resource( object, "socket", ctx->id );
         }
         // no connection created with this persistence key yet
         else {
-            sock = pecalloc( 1, sizeof(gbClient), 1 );
-            
-            if( host[0] == '/' || host[0] == '.' ){
-                ret = gb_unix_connect( sock, host, timeout );
-            }
-            else {
-                ret = gb_tcp_connect( sock, host, port, timeout );
-            }
+            ctx = pecalloc( 1, sizeof(gbContext), 1 );
+            ctx->socket = pecalloc( 1, sizeof(gbClient), 1 ); 
 
+            GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );            
             if( ret != 0 ) {
                 efree(pkey);
-                pefree(sock,1);
+                pefree(ctx->socket,1);
+                pefree(ctx,1);
                 return FAILURE;
             }
             
             // store the reference
-            new_le.ptr = sock;
+            new_le.ptr  = ctx;
             new_le.type = le_gibson_psock;
 
-            zend_hash_add( &EG(persistent_list), pkey, pkey_len + 1, &new_le, sizeof(zend_rsrc_list_entry), NULL );
-
-            #if PHP_VERSION_ID >= 50400
-            id = zend_list_insert(sock, le_gibson_psock TSRMLS_CC);
-            #else
-            id = zend_list_insert(sock, le_gibson_psock);
-            #endif
-            add_property_resource(object, "socket", id);
+            zend_hash_update( &EG(persistent_list), pkey, pkey_len + 1, &new_le, sizeof(zend_rsrc_list_entry), NULL );
+            
+            ctx->id = ZEND_REGISTER_RESOURCE( NULL, ctx, le_gibson_psock );
+            add_property_resource( object, "socket", ctx->id );
         }
 
         efree(pkey);
@@ -277,39 +293,20 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
     }
     // non persistent connection
     else {
-        /* if there is a gibson sock already we have to remove it from the list */
-        if (gibson_sock_get(object, &sock TSRMLS_CC) > 0) {
-            if (zend_hash_find(Z_OBJPROP_P(object), "socket",sizeof("socket"), (void **) &socket) == FAILURE) {
-                /* maybe there is a socket but the id isn't known.. what to do? */
-            } else {
-                zend_list_delete(Z_LVAL_PP(socket)); /* the refcount should be decreased and the detructor called */
-            }
-        } else {
-            zend_clear_exception(TSRMLS_C); /* clear exception triggered by non-existent socket during connect(). */
-        }
+        ctx = ecalloc(1, sizeof(gbContext));
+        ctx->socket = ecalloc(1, sizeof(gbClient) );
 
-        sock = ecalloc(1, sizeof(gbClient));
-
-        if( host[0] == '/' || host[0] == '.' ){
-            ret = gb_unix_connect( sock, host, timeout );
-        }
-        else {
-            ret = gb_tcp_connect( sock, host, port, timeout );
-        }
+        GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );
 
         if( ret != 0 ) {
-            efree(sock);
+            efree(ctx->socket);
+            efree(ctx);
             return FAILURE;
         }
 
-        #if PHP_VERSION_ID >= 50400
-        id = zend_list_insert(sock, le_gibson_sock TSRMLS_CC);
-        #else
-        id = zend_list_insert(sock, le_gibson_sock);
-        #endif
-        add_property_resource(object, "socket", id);
+        ctx->id = ZEND_REGISTER_RESOURCE( NULL, ctx, le_gibson_sock );
+        add_property_resource( object, "socket", ctx->id );
         
-
 	    return SUCCESS;
     }
 }
@@ -363,8 +360,7 @@ PHP_METHOD(Gibson, getLastError) {
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+  GET_SOCKET_RESOURCE(sock);
 
 	switch( sock->error )
 	{
@@ -386,9 +382,7 @@ PHP_METHOD(Gibson,__destruct) {
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(getThis(), &sock TSRMLS_CC) < 0) {
-		RETURN_FALSE;
-	}
+	GET_SOCKET_RESOURCE(sock);
 }
 
 PHP_METHOD(Gibson, connect)
@@ -433,8 +427,7 @@ PHP_METHOD(Gibson, set)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_set( sock, key, key_len, val, val_len, expire ) != 0 )
 		RETURN_FALSE;
@@ -456,8 +449,7 @@ PHP_METHOD(Gibson, mset)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mset( sock, key, key_len, val, val_len ) != 0 )
 		RETURN_FALSE;
@@ -479,8 +471,7 @@ PHP_METHOD(Gibson, ttl)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_ttl( sock, key, key_len, expire ) != 0 )
 		RETURN_FALSE;
@@ -502,8 +493,7 @@ PHP_METHOD(Gibson, mttl)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mttl( sock, key, key_len, expire ) != 0 )
 		RETURN_FALSE;
@@ -523,8 +513,7 @@ PHP_METHOD(Gibson, get)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_get( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -545,8 +534,7 @@ PHP_METHOD(Gibson, mget)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mget( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -579,8 +567,7 @@ PHP_METHOD(Gibson, del)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_del( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -600,8 +587,7 @@ PHP_METHOD(Gibson, mdel)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mdel( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -621,8 +607,7 @@ PHP_METHOD(Gibson, inc)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_inc( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -642,8 +627,7 @@ PHP_METHOD(Gibson, minc)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_minc( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -663,8 +647,7 @@ PHP_METHOD(Gibson, dec)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_dec( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -684,8 +667,7 @@ PHP_METHOD(Gibson, mdec)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mdec( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -707,8 +689,7 @@ PHP_METHOD(Gibson, lock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_lock( sock, key, key_len, time ) != 0 )
 		RETURN_FALSE;
@@ -730,8 +711,7 @@ PHP_METHOD(Gibson, mlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_mlock( sock, key, key_len, time ) != 0 )
 		RETURN_FALSE;
@@ -751,8 +731,7 @@ PHP_METHOD(Gibson, unlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_unlock( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -772,8 +751,7 @@ PHP_METHOD(Gibson, munlock)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_munlock( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -793,8 +771,7 @@ PHP_METHOD(Gibson, count)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_count( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -814,8 +791,7 @@ PHP_METHOD(Gibson, sizeof)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_sizeof( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -835,8 +811,7 @@ PHP_METHOD(Gibson, msizeof)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_msizeof( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -856,8 +831,7 @@ PHP_METHOD(Gibson, encof)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_encof( sock, key, key_len ) != 0 )
 		RETURN_FALSE;
@@ -876,8 +850,7 @@ PHP_METHOD(Gibson, stats)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_stats( sock ) != 0 ) {
 		RETURN_FALSE;
@@ -908,8 +881,7 @@ PHP_METHOD(Gibson, ping)
 		RETURN_FALSE;
 	}
 
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+	GET_SOCKET_RESOURCE(sock);
 
 	if( gb_ping( sock ) != 0 )
 		RETURN_FALSE;
@@ -925,9 +897,8 @@ PHP_METHOD(Gibson, quit)
 	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
 		RETURN_FALSE;
 	}
-    
-	if (gibson_sock_get(object, &sock TSRMLS_CC) < 0)
-		RETURN_FALSE;
+
+	GET_SOCKET_RESOURCE(sock);
 
     if( gb_quit( sock ) != 0 )
 		RETURN_FALSE;
