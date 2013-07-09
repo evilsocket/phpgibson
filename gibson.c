@@ -103,6 +103,29 @@ zend_module_entry gibson_module_entry = {
 ZEND_GET_MODULE(gibson)
 #endif
 
+#define GB_DEBUG_ENABLED 0
+
+static void gb_debug(const char *format, ...) {
+#if GB_DEBUG_ENABLED == 1    
+	TSRMLS_FETCH();
+
+    char buffer[1024] = {0};
+    va_list args;
+
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer)-1, format, args);
+    va_end(args);
+    
+    FILE *fp = fopen( "/tmp/phpgibson_debug.log", "a+t" );
+    if( fp ){
+        fprintf( fp, "%s\n", buffer );
+        fclose(fp);
+    }
+#else
+
+#endif
+}
+
 static void add_constant_long(zend_class_entry *ce, char *name, int value) {
 	zval *constval;
 
@@ -158,6 +181,8 @@ static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 {
 	gbContext *ctx = (gbContext *)rsrc->ptr;
 
+    gb_debug( "socket destructor %d", ctx->id );
+
 	gb_disconnect(ctx->socket TSRMLS_CC);
 
 	efree(ctx->socket);
@@ -167,8 +192,10 @@ static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 {
 	gbContext *ctx = (gbContext *)rsrc->ptr;
-
-	gb_disconnect(ctx->socket TSRMLS_CC);
+    
+    gb_debug( "psocket destructor %d", ctx->id );
+	
+    gb_disconnect(ctx->socket TSRMLS_CC);
 
 	pefree(ctx->socket,1);
     pefree(ctx,1);
@@ -178,8 +205,8 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 #define GET_SOCKET_RESOURCE(s) {\
     zval **_tmp_zval;\
     gbContext *ctx;\
-    if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket",\
-                sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {\
+    if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket", sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {\
+        gb_debug("unable to find socket resource");\
         RETURN_FALSE;\
     }\
 \
@@ -194,7 +221,7 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 
 
 #define GB_SOCK_CONNECT( ret, sock, host, port, timeout ) gb_disconnect((sock) TSRMLS_CC);\
-							  if( GB_IS_UNIX_SOCKET(host) ){\
+							                              if( GB_IS_UNIX_SOCKET(host) ){\
                                                             (ret) = gb_unix_connect( (sock), (host), (timeout) );\
                                                           }\
                                                           else {\
@@ -244,6 +271,8 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
         
         // search for persistent connections
         if( zend_hash_find( &EG(persistent_list), pkey, pkey_len + 1, (void **)&le ) == SUCCESS) {
+            gb_debug( "reusing persistent socket %s", pkey );
+
             ctx = le->ptr;
 
             // sanity check to ensure that the resource is still a regular resource number
@@ -251,14 +280,16 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
                 // add a reference to the persistent socket 
                 zend_list_addref(ctx->id);
             } else {
-                // php_error_docref(NULL TSRMLS_CC, E_ERROR,"Not a valid persistent socket resource");
+                gb_debug( "not a valid persistent socket resource" );
                 ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock );
             }
 
             // Make sure the socket is connected ( with a PING command )
             if( gb_ping( ctx->socket ) != 0 ){
+                gb_debug( "reconnecting persistent socket" );
                 GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );
                 if( ret != 0 ) {
+                    gb_debug( "reconnection failed: %d", ctx->socket->error );
                     efree(pkey);
                     return FAILURE;
                 }
@@ -268,11 +299,14 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
         }
         // no connection created with this persistence key yet
         else {
+            gb_debug( "creating persistent socket %s", pkey );
+
             ctx = pecalloc( 1, sizeof(gbContext), 1 );
             ctx->socket = pecalloc( 1, sizeof(gbClient), 1 ); 
 
             GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );            
             if( ret != 0 ) {
+                gb_debug( "connection failed: %d", ctx->socket->error );
                 efree(pkey);
                 pefree(ctx->socket,1);
                 pefree(ctx,1);
@@ -289,17 +323,21 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
             add_property_resource( object, "socket", ctx->id );
         }
 
+        gb_debug( "succesfully created persistent connection ( id %d )", ctx->id );
+
         efree(pkey);
         return SUCCESS;
     }
     // non persistent connection
     else {
+        gb_debug( "creating volatile connection" );
+
         ctx = ecalloc(1, sizeof(gbContext));
         ctx->socket = ecalloc(1, sizeof(gbClient) );
 
         GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );
-
         if( ret != 0 ) {
+            gb_debug( "connection failed: %d", ctx->socket->error );
             efree(ctx->socket);
             efree(ctx);
             return FAILURE;
@@ -307,7 +345,9 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 
         ctx->id = ZEND_REGISTER_RESOURCE( NULL, ctx, le_gibson_sock );
         add_property_resource( object, "socket", ctx->id );
-        
+       
+        gb_debug( "succesfully created connection ( id %d )", ctx->id );
+
 	    return SUCCESS;
     }
 }
@@ -317,6 +357,7 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 */
 PHP_MSHUTDOWN_FUNCTION(gibson)
 {
+    gb_debug( "MSHUTDOWN" );
 	return SUCCESS;
 }
 
@@ -325,6 +366,7 @@ PHP_MSHUTDOWN_FUNCTION(gibson)
 */
 PHP_RINIT_FUNCTION(gibson)
 {
+    gb_debug( "RINIT" );
 	return SUCCESS;
 }
 
@@ -333,6 +375,7 @@ PHP_RINIT_FUNCTION(gibson)
 */
 PHP_RSHUTDOWN_FUNCTION(gibson)
 {
+    gb_debug( "RSHUTDOWN" );
 	return SUCCESS;
 }
 
@@ -361,7 +404,7 @@ PHP_METHOD(Gibson, getLastError) {
 		RETURN_FALSE;
 	}
 
-  GET_SOCKET_RESOURCE(sock);
+    GET_SOCKET_RESOURCE(sock);
 
 	switch( sock->error )
 	{
