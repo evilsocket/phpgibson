@@ -248,7 +248,7 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 
             // sanity check to ensure that the resource is still a regular resource number
             if (zend_list_find(ctx->id, &type) == ctx) {
-                // add a reference to the persistent movie 
+                // add a reference to the persistent socket 
                 zend_list_addref(ctx->id);
             } else {
                 // php_error_docref(NULL TSRMLS_CC, E_ERROR,"Not a valid persistent socket resource");
@@ -906,4 +906,3 @@ PHP_METHOD(Gibson, quit)
 
 	RETURN_TRUE;
 }
-
