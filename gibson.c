@@ -193,7 +193,8 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 
 
 
-#define GB_SOCK_CONNECT( ret, sock, host, port, timeout ) if( GB_IS_UNIX_SOCKET(host) ){\
+#define GB_SOCK_CONNECT( ret, sock, host, port, timeout ) gb_disconnect((sock) TSRMLS_CC);\
+							  if( GB_IS_UNIX_SOCKET(host) ){\
                                                             (ret) = gb_unix_connect( (sock), (host), (timeout) );\
                                                           }\
                                                           else {\
