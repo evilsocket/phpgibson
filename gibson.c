@@ -274,19 +274,9 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
             gb_debug( "reusing persistent socket %s", pkey );
 
             ctx = le->ptr;
-
-            // sanity check to ensure that the resource is still a regular resource number
-            if (zend_list_find(ctx->id, &type) == ctx) {
-                // add a reference to the persistent socket 
-                zend_list_addref(ctx->id);
-            } else {
-                gb_debug( "not a valid persistent socket resource" );
-                ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock );
-            }
-
             // Make sure the socket is connected ( with a PING command )
             if( gb_ping( ctx->socket ) != 0 ){
-                gb_debug( "reconnecting persistent socket" );
+                gb_debug( "reconnecting persistent socket ( ping failed with %d )", ctx->socket->error );
                 GB_SOCK_CONNECT( ret, ctx->socket, host, port, timeout );
                 if( ret != 0 ) {
                     gb_debug( "reconnection failed: %d", ctx->socket->error );
