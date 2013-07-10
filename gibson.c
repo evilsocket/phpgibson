@@ -299,8 +299,6 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 					}
 				}
 
-				php_printf("reusing existing persistent connection\n");
-
 				c->ctx->id = ctx->id;
 				c->ctx->socket = ctx->socket;
 
