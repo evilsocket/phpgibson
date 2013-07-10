@@ -73,6 +73,7 @@ static void gb_debug(const char *format, ...) /* {{{ */
 	FILE *fp = fopen("/tmp/phpgibson_debug.log", "a+t");
 	if (fp) {
 		fprintf(fp, "%s\n", buffer);
+		fflush(fp);
 		fclose(fp);
 	}
 #else
@@ -161,23 +162,7 @@ static zend_object_value php_gibson_client_new(zend_class_entry *ce TSRMLS_DC) /
 }
 /* }}} */
 
-/* retrieve the socket property by object id */
-#define GET_SOCKET_RESOURCE(s) {																				\
-	zval **_tmp_zval;																							\
-	gbContext *ctx;																								\
-	if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket", sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {	\
-		gb_debug("unable to find socket resource");																\
-		RETURN_FALSE;																							\
-	}																											\
-	\
-	ZEND_FETCH_RESOURCE2(ctx, gbContext *, _tmp_zval, -1, "socket", le_gibson_sock, le_gibson_psock);			\
-	\
-	(s) = ctx->socket;																							\
-}
-
 #define GB_IS_UNIX_SOCKET(host ) ( (host)[0] == '/' || (host)[0] == '.')
-
-
 
 #define GB_SOCK_CONNECT(ret, sock, host, port, timeout)	\
 	gb_disconnect((sock));						\
@@ -289,7 +274,10 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 
 				/* Make sure the socket is connected (with a PING command) */
 				if (gb_ping(ctx->socket) != 0) {
-					gb_debug("reconnecting persistent socket ( ping failed with %d )", ctx->socket->error);
+					char gb_last_error[1024] = {0};
+					gb_getlasterror( gb_last_error, 1024 );
+
+					gb_debug("reconnecting persistent socket ( ping failed with '%s' )", gb_last_error );
 					GB_SOCK_CONNECT(ret, ctx->socket, host, port, timeout);
 					if (ret != 0) {
 						GB_SOCK_ERROR(ctx, host, port, "reconnect to");
