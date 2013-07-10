@@ -32,46 +32,6 @@
 #define PHP_GIBSON_EXTNAME "gibson"
 #define PHP_GIBSON_SOCK_NAME "Gibson Socket Buffer"
 
-PHP_METHOD(Gibson, __construct);
-PHP_METHOD(Gibson, __destruct);
-PHP_METHOD(Gibson, getLastError);
-PHP_METHOD(Gibson, connect);
-PHP_METHOD(Gibson, pconnect);
-PHP_METHOD(Gibson, set);
-PHP_METHOD(Gibson, mset);
-PHP_METHOD(Gibson, ttl);
-PHP_METHOD(Gibson, mttl);
-PHP_METHOD(Gibson, get);
-PHP_METHOD(Gibson, mget);
-PHP_METHOD(Gibson, del);
-PHP_METHOD(Gibson, mdel);
-PHP_METHOD(Gibson, inc);
-PHP_METHOD(Gibson, minc);
-PHP_METHOD(Gibson, mdec);
-PHP_METHOD(Gibson, dec);
-PHP_METHOD(Gibson, lock);
-PHP_METHOD(Gibson, mlock);
-PHP_METHOD(Gibson, unlock);
-PHP_METHOD(Gibson, munlock);
-PHP_METHOD(Gibson, count);
-PHP_METHOD(Gibson, sizeof);
-PHP_METHOD(Gibson, msizeof);
-PHP_METHOD(Gibson, encof);
-PHP_METHOD(Gibson, stats);
-PHP_METHOD(Gibson, ping);
-PHP_METHOD(Gibson, quit);
-
-PHP_MINIT_FUNCTION(gibson);
-PHP_MSHUTDOWN_FUNCTION(gibson);
-PHP_RINIT_FUNCTION(gibson);
-PHP_RSHUTDOWN_FUNCTION(gibson);
-PHP_MINFO_FUNCTION(gibson);
-
-#ifndef _MSC_VER
-ZEND_BEGIN_MODULE_GLOBALS(gibson)
-ZEND_END_MODULE_GLOBALS(gibson)
-#endif
-
 extern zend_module_entry gibson_module_entry;
 #define phpext_gibson_ptr &gibson_module_entry
 

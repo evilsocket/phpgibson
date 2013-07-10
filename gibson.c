@@ -30,74 +30,19 @@
 #include "config.h"
 #endif
 #include "php.h"
+#include "ext/standard/info.h"
 #include "php_gibson.h"
 #include <gibson.h>
 
 typedef struct {
-  int id;
-  gbClient *socket;
-}
-gbContext;
+	int id;
+	gbClient *socket;
+} gbContext;
 
 int le_gibson_sock;
 int le_gibson_psock;
 
 zend_class_entry *gibson_ce;
-
-static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC);
-static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC);
-
-ZEND_DECLARE_MODULE_GLOBALS(gibson)
-
-static zend_function_entry gibson_functions[] = {
-	PHP_ME(Gibson, __construct, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, __destruct, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, getLastError, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, connect, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, pconnect, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, set, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mset, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, ttl, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mttl, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, get, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mget, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, del, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mdel, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, inc, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, minc, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mdec, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, dec, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, lock, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, mlock, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, unlock, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, sizeof, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, msizeof, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, encof, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
-
-	{NULL, NULL, NULL}
-};
-
-zend_module_entry gibson_module_entry = {
-	#if ZEND_MODULE_API_NO >= 20010901
-	STANDARD_MODULE_HEADER,
-	#endif
-	PHP_GIBSON_EXTNAME,
-	NULL,
-	PHP_MINIT(gibson),
-	PHP_MSHUTDOWN(gibson),
-	PHP_RINIT(gibson),
-	PHP_RSHUTDOWN(gibson),
-	PHP_MINFO(gibson),
-	#if ZEND_MODULE_API_NO >= 20010901
-	PHP_GIBSON_VERSION,
-	#endif
-	STANDARD_MODULE_PROPERTIES
-};
 
 #ifdef COMPILE_DL_GIBSON
 ZEND_GET_MODULE(gibson)
@@ -105,7 +50,8 @@ ZEND_GET_MODULE(gibson)
 
 #define GB_DEBUG_ENABLED 0
 
-static void gb_debug(const char *format, ...) {
+static void gb_debug(const char *format, ...) /* {{{ */
+{
 #if GB_DEBUG_ENABLED == 1    
 	TSRMLS_FETCH();
 
@@ -125,8 +71,10 @@ static void gb_debug(const char *format, ...) {
 
 #endif
 }
+/* }}} */
 
-static void add_constant_long(zend_class_entry *ce, char *name, int value) {
+static void add_constant_long(zend_class_entry *ce, char *name, int value) /* {{{ */
+{
 	zval *constval;
 
 	constval = pemalloc(sizeof(zval), 1);
@@ -135,49 +83,9 @@ static void add_constant_long(zend_class_entry *ce, char *name, int value) {
 	zend_hash_add(&ce->constants_table, name, 1 + strlen(name),
 	(void*)&constval, sizeof(zval*), NULL);
 }
+/* }}} */
 
-/**
-* PHP_MINIT_FUNCTION
-*/
-PHP_MINIT_FUNCTION(gibson)
-{
-	zend_class_entry gibson_class_entry;
-
-	/* Gibson class */
-	INIT_CLASS_ENTRY(gibson_class_entry, "Gibson", gibson_functions);
-	gibson_ce = zend_register_internal_class(&gibson_class_entry TSRMLS_CC);
-
-	le_gibson_sock = zend_register_list_destructors_ex(
-		gibson_socket_destructor,
-		NULL,
-		PHP_GIBSON_SOCK_NAME,
-		module_number
-	);
-
-	le_gibson_psock = zend_register_list_destructors_ex(
-		NULL,
-        gibson_psocket_destructor,
-		PHP_GIBSON_SOCK_NAME,
-		module_number
-	);
-
-	add_constant_long(gibson_ce, "REPL_ERR", REPL_ERR);
-	add_constant_long(gibson_ce, "REPL_ERR_NOT_FOUND", REPL_ERR_NOT_FOUND);
-	add_constant_long(gibson_ce, "REPL_ERR_NAN", REPL_ERR_NAN);
-	add_constant_long(gibson_ce, "REPL_ERR_MEM", REPL_ERR_MEM);
-	add_constant_long(gibson_ce, "REPL_ERR_LOCKED", REPL_ERR_LOCKED);
-	add_constant_long(gibson_ce, "REPL_OK", REPL_OK);
-	add_constant_long(gibson_ce, "REPL_VAL", REPL_VAL);
-	add_constant_long(gibson_ce, "REPL_KVAL", REPL_KVAL);
-
-	add_constant_long(gibson_ce, "ENC_PLAIN", GB_ENC_PLAIN);
-	add_constant_long(gibson_ce, "ENC_NUMBER", GB_ENC_NUMBER);
-	add_constant_long(gibson_ce, "ENC_LZF", GB_ENC_LZF);
-
-	return SUCCESS;
-}
-
-static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
+static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* {{{ */
 {
 	gbContext *ctx = (gbContext *)rsrc->ptr;
 
@@ -188,8 +96,9 @@ static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 	efree(ctx->socket);
     efree(ctx);
 }
+/* }}} */
 
-static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
+static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* {{{ */
 {
 	gbContext *ctx = (gbContext *)rsrc->ptr;
     
@@ -200,37 +109,38 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC)
 	pefree(ctx->socket,1);
     pefree(ctx,1);
 }
+/* }}} */
 
-// retrieve the socket property by object id
-#define GET_SOCKET_RESOURCE(s) {\
-    zval **_tmp_zval;\
-    gbContext *ctx;\
-    if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket", sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {\
-        gb_debug("unable to find socket resource");\
-        RETURN_FALSE;\
-    }\
-\
-    ZEND_FETCH_RESOURCE2( ctx, gbContext *, _tmp_zval, -1,\
-            "socket", le_gibson_sock, le_gibson_psock );\
-\
-    (s) = ctx->socket;\
-}\
+/* retrieve the socket property by object id */
+#define GET_SOCKET_RESOURCE(s) {																				\
+    zval **_tmp_zval;																							\
+    gbContext *ctx;																								\
+    if (zend_hash_find(Z_OBJPROP_P(getThis()), "socket", sizeof("socket"), (void **)&_tmp_zval) == FAILURE) {	\
+        gb_debug("unable to find socket resource");																\
+        RETURN_FALSE;																							\
+    }																											\
+																												\
+    ZEND_FETCH_RESOURCE2( ctx, gbContext *, _tmp_zval, -1, "socket", le_gibson_sock, le_gibson_psock );			\
+																												\
+	(s) = ctx->socket;																							\
+}
 
 #define GB_IS_UNIX_SOCKET( host ) ( (host)[0] == '/' || (host)[0] == '.' ) 
 
 
 
-#define GB_SOCK_CONNECT( ret, sock, host, port, timeout ) gb_disconnect((sock) TSRMLS_CC);\
-							                              if( GB_IS_UNIX_SOCKET(host) ){\
-                                                            (ret) = gb_unix_connect( (sock), (host), (timeout) );\
-                                                          }\
-                                                          else {\
-                                                            (ret) = gb_tcp_connect( (sock), (host), (port), (timeout) );\
-                                                          }
+#define GB_SOCK_CONNECT( ret, sock, host, port, timeout )	\
+	gb_disconnect((sock) TSRMLS_CC);						\
+	if( GB_IS_UNIX_SOCKET(host) ) {							\
+		(ret) = gb_unix_connect( (sock), (host), (timeout) ); \
+    } else {												\
+        (ret) = gb_tcp_connect( (sock), (host), (port), (timeout) );\
+	}
 
-// get a persistent socket identifier
-static void gibson_socket_pid( char *address, int port, int timeout, char **pkey, int *pkey_len ){
-    // unix domain socket
+/* get a persistent socket identifier */
+static void gibson_socket_pid( char *address, int port, int timeout, char **pkey, int *pkey_len ) /* {{{ */
+{
+    /* unix domain socket */
     if( GB_IS_UNIX_SOCKET(address) ){
         *pkey_len = spprintf( &( *pkey ), 0, "phpgibson_%s_%d", address, timeout );
     }
@@ -239,8 +149,10 @@ static void gibson_socket_pid( char *address, int port, int timeout, char **pkey
         *pkey_len = spprintf( &( *pkey ), 0, "phpgibson_%s_%d_%d", address, port, timeout );
     }
 }
+/* }}} */
 
-PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
+PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ */
+{
 	zval *object;
 	int host_len, id, ret, pkey_len = 0;
 	char *host = NULL, *pkey = NULL;
@@ -351,52 +263,19 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent) {
 	    return SUCCESS;
     }
 }
+/* }}} */
 
-/**
-* PHP_MSHUTDOWN_FUNCTION
-*/
-PHP_MSHUTDOWN_FUNCTION(gibson)
+
+static PHP_METHOD(Gibson, __construct)  /* {{{ */
 {
-    gb_debug( "MSHUTDOWN" );
-	return SUCCESS;
-}
-
-/**
-* PHP_RINIT_FUNCTION
-*/
-PHP_RINIT_FUNCTION(gibson)
-{
-    gb_debug( "RINIT" );
-	return SUCCESS;
-}
-
-/**
-* PHP_RSHUTDOWN_FUNCTION
-*/
-PHP_RSHUTDOWN_FUNCTION(gibson)
-{
-    gb_debug( "RSHUTDOWN" );
-	return SUCCESS;
-}
-
-/**
-* PHP_MINFO_FUNCTION
-*/
-PHP_MINFO_FUNCTION(gibson)
-{
-	php_info_print_table_start();
-	php_info_print_table_header(2, "Gibson Support", "enabled");
-	php_info_print_table_row(2, "Gibson Version", PHP_GIBSON_VERSION);
-	php_info_print_table_end();
-}
-
-PHP_METHOD(Gibson, __construct) {
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
 }
+/* }}} */
 
-PHP_METHOD(Gibson, getLastError) {
+static PHP_METHOD(Gibson, getLastError)  /* {{{ */
+{
 	zval *object;
 	gbClient *sock;
 
@@ -418,8 +297,10 @@ PHP_METHOD(Gibson, getLastError) {
 			RETURN_STRING( strerror(sock->error), 1 );
 	}
 }
+/* }}} */
 
-PHP_METHOD(Gibson,__destruct) {
+static PHP_METHOD(Gibson,__destruct)  /* {{{ */
+{
 	gbClient *sock;
 
 	if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
@@ -428,8 +309,9 @@ PHP_METHOD(Gibson,__destruct) {
 
 	GET_SOCKET_RESOURCE(sock);
 }
+/* }}} */
 
-PHP_METHOD(Gibson, connect)
+static PHP_METHOD(Gibson, connect) /* {{{ */
 {
 	if ( gibson_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0 ) == FAILURE) {
 		RETURN_FALSE;
@@ -437,8 +319,9 @@ PHP_METHOD(Gibson, connect)
 		RETURN_TRUE;
 	}
 }
+/* }}} */
 
-PHP_METHOD(Gibson, pconnect)
+static PHP_METHOD(Gibson, pconnect) /* {{{ */
 {
 	if ( gibson_connect(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1 ) == FAILURE) {
 		RETURN_FALSE;
@@ -446,18 +329,18 @@ PHP_METHOD(Gibson, pconnect)
 		RETURN_TRUE;
 	}
 }
+/* }}} */
 
-#define PHP_GIBSON_RETURN_REPLY() if( sock->reply.encoding == GB_ENC_PLAIN ){ \
-									RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 1); \
-								  } \
-								  else if( sock->reply.encoding == GB_ENC_NUMBER ){ \
-									  RETURN_LONG( gb_reply_number(sock) ); \
-								  } \
-								  else { \
-									  RETURN_FALSE; \
-								  }
+#define PHP_GIBSON_RETURN_REPLY()									\
+	if( sock->reply.encoding == GB_ENC_PLAIN ){						\
+		RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 1);	\
+	} else if( sock->reply.encoding == GB_ENC_NUMBER ) {			\
+		RETURN_LONG( gb_reply_number(sock) );						\
+	} else {														\
+		RETURN_FALSE;												\
+	}
 
-PHP_METHOD(Gibson, set)
+static PHP_METHOD(Gibson, set) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -478,8 +361,9 @@ PHP_METHOD(Gibson, set)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mset)
+static PHP_METHOD(Gibson, mset) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -500,8 +384,9 @@ PHP_METHOD(Gibson, mset)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, ttl)
+static PHP_METHOD(Gibson, ttl) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -522,8 +407,9 @@ PHP_METHOD(Gibson, ttl)
 
 	RETURN_TRUE;
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mttl)
+static PHP_METHOD(Gibson, mttl) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -544,8 +430,9 @@ PHP_METHOD(Gibson, mttl)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, get)
+static PHP_METHOD(Gibson, get) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -564,8 +451,9 @@ PHP_METHOD(Gibson, get)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mget)
+static PHP_METHOD(Gibson, mget) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -598,8 +486,9 @@ PHP_METHOD(Gibson, mget)
 
 	gb_reply_multi_free(&mb);
 }
+/* }}} */
 
-PHP_METHOD(Gibson, del)
+static PHP_METHOD(Gibson, del) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -618,8 +507,9 @@ PHP_METHOD(Gibson, del)
 
 	RETURN_TRUE;
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mdel)
+static PHP_METHOD(Gibson, mdel) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -638,8 +528,9 @@ PHP_METHOD(Gibson, mdel)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, inc)
+static PHP_METHOD(Gibson, inc) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -658,8 +549,9 @@ PHP_METHOD(Gibson, inc)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, minc)
+static PHP_METHOD(Gibson, minc) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -678,8 +570,9 @@ PHP_METHOD(Gibson, minc)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, dec)
+static PHP_METHOD(Gibson, dec) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -698,8 +591,9 @@ PHP_METHOD(Gibson, dec)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mdec)
+static PHP_METHOD(Gibson, mdec) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -718,8 +612,9 @@ PHP_METHOD(Gibson, mdec)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, lock)
+static PHP_METHOD(Gibson, lock) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -740,8 +635,9 @@ PHP_METHOD(Gibson, lock)
 
 	RETURN_TRUE;
 }
+/* }}} */
 
-PHP_METHOD(Gibson, mlock)
+static PHP_METHOD(Gibson, mlock) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -762,8 +658,9 @@ PHP_METHOD(Gibson, mlock)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, unlock)
+static PHP_METHOD(Gibson, unlock) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -782,8 +679,9 @@ PHP_METHOD(Gibson, unlock)
 
 	RETURN_TRUE;
 }
+/* }}} */
 
-PHP_METHOD(Gibson, munlock)
+static PHP_METHOD(Gibson, munlock) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -802,8 +700,9 @@ PHP_METHOD(Gibson, munlock)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, count)
+static PHP_METHOD(Gibson, count) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -822,8 +721,9 @@ PHP_METHOD(Gibson, count)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, sizeof)
+static PHP_METHOD(Gibson, sizeof) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -842,8 +742,9 @@ PHP_METHOD(Gibson, sizeof)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, msizeof)
+static PHP_METHOD(Gibson, msizeof) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -862,8 +763,9 @@ PHP_METHOD(Gibson, msizeof)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, encof)
+static PHP_METHOD(Gibson, encof) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -882,8 +784,9 @@ PHP_METHOD(Gibson, encof)
 
 	PHP_GIBSON_RETURN_REPLY();
 }
+/* }}} */
 
-PHP_METHOD(Gibson, stats)
+static PHP_METHOD(Gibson, stats) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -915,8 +818,9 @@ PHP_METHOD(Gibson, stats)
 
 	gb_reply_multi_free(&mb);
 }
+/* }}} */
 
-PHP_METHOD(Gibson, ping)
+static PHP_METHOD(Gibson, ping) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -932,8 +836,9 @@ PHP_METHOD(Gibson, ping)
 
 	RETURN_TRUE;
 }
+/* }}} */
 
-PHP_METHOD(Gibson, quit)
+static PHP_METHOD(Gibson, quit) /* {{{ */
 {
 	zval *object;
 	gbClient *sock;
@@ -949,3 +854,134 @@ PHP_METHOD(Gibson, quit)
 
 	RETURN_TRUE;
 }
+/* }}} */
+
+static zend_function_entry gibson_functions[] = { /* {{{ */
+	PHP_ME(Gibson, __construct, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, __destruct, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, getLastError, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, connect, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, pconnect, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, set, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mset, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, ttl, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mttl, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, get, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mget, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, del, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mdel, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, inc, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, minc, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mdec, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, dec, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, lock, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, mlock, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, unlock, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, sizeof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, msizeof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, encof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
+	{NULL, NULL, NULL}
+};
+/* }}} */
+
+static PHP_MINIT_FUNCTION(gibson) /* {{{ */
+{
+	zend_class_entry gibson_class_entry;
+
+	/* Gibson class */
+	INIT_CLASS_ENTRY(gibson_class_entry, "Gibson", gibson_functions);
+	gibson_ce = zend_register_internal_class(&gibson_class_entry TSRMLS_CC);
+
+	le_gibson_sock = zend_register_list_destructors_ex(
+		gibson_socket_destructor,
+		NULL,
+		PHP_GIBSON_SOCK_NAME,
+		module_number
+	);
+
+	le_gibson_psock = zend_register_list_destructors_ex(
+		NULL,
+        gibson_psocket_destructor,
+		PHP_GIBSON_SOCK_NAME,
+		module_number
+	);
+
+	add_constant_long(gibson_ce, "REPL_ERR", REPL_ERR);
+	add_constant_long(gibson_ce, "REPL_ERR_NOT_FOUND", REPL_ERR_NOT_FOUND);
+	add_constant_long(gibson_ce, "REPL_ERR_NAN", REPL_ERR_NAN);
+	add_constant_long(gibson_ce, "REPL_ERR_MEM", REPL_ERR_MEM);
+	add_constant_long(gibson_ce, "REPL_ERR_LOCKED", REPL_ERR_LOCKED);
+	add_constant_long(gibson_ce, "REPL_OK", REPL_OK);
+	add_constant_long(gibson_ce, "REPL_VAL", REPL_VAL);
+	add_constant_long(gibson_ce, "REPL_KVAL", REPL_KVAL);
+
+	add_constant_long(gibson_ce, "ENC_PLAIN", GB_ENC_PLAIN);
+	add_constant_long(gibson_ce, "ENC_NUMBER", GB_ENC_NUMBER);
+	add_constant_long(gibson_ce, "ENC_LZF", GB_ENC_LZF);
+
+	return SUCCESS;
+}
+/* }}} */
+
+static PHP_MSHUTDOWN_FUNCTION(gibson) /* {{{ */
+{
+    gb_debug( "MSHUTDOWN" );
+	return SUCCESS;
+}
+/* }}} */
+
+static PHP_RINIT_FUNCTION(gibson) /* {{{ */
+{
+    gb_debug( "RINIT" );
+	return SUCCESS;
+}
+/* }}} */
+
+static PHP_RSHUTDOWN_FUNCTION(gibson) /* {{{ */
+{
+    gb_debug( "RSHUTDOWN" );
+	return SUCCESS;
+}
+/* }}} */
+
+static PHP_MINFO_FUNCTION(gibson) /* {{{ */
+{
+	php_info_print_table_start();
+	php_info_print_table_header(2, "Gibson Support", "enabled");
+	php_info_print_table_row(2, "Gibson Version", PHP_GIBSON_VERSION);
+	php_info_print_table_end();
+}
+/* }}} */
+
+
+zend_module_entry gibson_module_entry = { /* {{{ */
+	#if ZEND_MODULE_API_NO >= 20010901
+	STANDARD_MODULE_HEADER,
+	#endif
+	PHP_GIBSON_EXTNAME,
+	NULL,
+	PHP_MINIT(gibson),
+	PHP_MSHUTDOWN(gibson),
+	PHP_RINIT(gibson),
+	PHP_RSHUTDOWN(gibson),
+	PHP_MINFO(gibson),
+	#if ZEND_MODULE_API_NO >= 20010901
+	PHP_GIBSON_VERSION,
+	#endif
+	STANDARD_MODULE_PROPERTIES
+};
+/* }}} */
+
+/*
+ * Local variables:
+ * tab-width: 4
+ * c-basic-offset: 4
+ * End:
+ * vim600: noet sw=4 ts=4 fdm=marker
+ * vim<600: noet sw=4 ts=4
+ */
