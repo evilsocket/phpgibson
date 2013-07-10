@@ -130,11 +130,18 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* 
 
 #define GB_SOCK_CONNECT(ret, sock, host, port, timeout)	\
 	gb_disconnect((sock) TSRMLS_CC);						\
-if (GB_IS_UNIX_SOCKET(host)) {							\
-	(ret) = gb_unix_connect((sock), (host), (timeout)); \
-} else {												\
-	(ret) = gb_tcp_connect((sock), (host), (port), (timeout));\
-}
+	if (GB_IS_UNIX_SOCKET(host)) {							\
+		(ret) = gb_unix_connect((sock), (host), (timeout)); \
+	} else {												\
+		(ret) = gb_tcp_connect((sock), (host), (port), (timeout));\
+	}
+
+#define GB_SOCK_ERROR(ctx, host, port, action)																						\
+	if (GB_IS_UNIX_SOCKET((host))) {																								\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s socket '%s': %s (%d)", (action), (host), strerror((ctx)->socket->error), (ctx)->socket->error);	\
+	} else {																														\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s '%s:%ld': %s (%d)", (action), (host), (port), strerror((ctx)->socket->error), (ctx)->socket->error);	\
+	}
 
 /* get a persistent socket identifier */
 static void gibson_socket_pid(char *address, int port, int timeout, char **pkey, int *pkey_len) /* {{{ */
@@ -184,29 +191,40 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 		if (zend_hash_find( &EG(persistent_list), pkey, pkey_len + 1, (void **)&le) == SUCCESS) {
 			gb_debug("reusing persistent socket %s", pkey);
 
-			ctx = le->ptr;
-
-			/* sanity check to ensure that the resource is still a regular resource number */
-			if (zend_list_find(ctx->id, &type) == ctx) {
-				/* add a reference to the persistent socket  */
-				zend_list_addref(ctx->id);
+			if (le->type != le_gibson_psock) {
+				/* this is something strange, kill it */
+				zend_hash_del(&EG(persistent_list), pkey, pkey_len + 1);
+				efree(pkey);
+				return FAILURE;
 			} else {
-				gb_debug("not a valid persistent socket resource");
-				ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock );
-			}
 
-			/* Make sure the socket is connected (with a PING command) */
-			if (gb_ping(ctx->socket) != 0) {
-				gb_debug("reconnecting persistent socket ( ping failed with %d )", ctx->socket->error);
-				GB_SOCK_CONNECT(ret, ctx->socket, host, port, timeout);
-				if (ret != 0) {
-					gb_debug("reconnection failed: %d", ctx->socket->error);
-					efree(pkey);
-					return FAILURE;
+				ctx = le->ptr;
+
+				/* sanity check to ensure that the resource is still a regular resource number */
+				if (zend_list_find(ctx->id, &type) == ctx) {
+					/* add a reference to the persistent socket  */
+					zend_list_addref(ctx->id);
+				} else {
+					/* this is totally ok, persistent connection is not present in the regular list at the beginning of a request */
+					ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock);
 				}
-			}
 
-			add_property_resource(object, "socket", ctx->id);
+				/* Make sure the socket is connected (with a PING command) */
+				if (gb_ping(ctx->socket) != 0) {
+					gb_debug("reconnecting persistent socket ( ping failed with %d )", ctx->socket->error);
+					GB_SOCK_CONNECT(ret, ctx->socket, host, port, timeout);
+					if (ret != 0) {
+						GB_SOCK_ERROR(ctx, host, port, "reconnect to");
+						gb_debug("reconnection failed: %d", ctx->socket->error);
+						efree(pkey);
+						return FAILURE;
+					}
+				}
+
+				add_property_resource(object, "socket", ctx->id);
+				efree(pkey);
+				return SUCCESS;
+			}
 		}
 		/* no connection created with this persistence key yet */
 		else {
@@ -217,6 +235,7 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 
 			GB_SOCK_CONNECT(ret, ctx->socket, host, port, timeout);
 			if (ret != 0) {
+				GB_SOCK_ERROR(ctx, host, port, "connect to");
 				gb_debug("connection failed: %d", ctx->socket->error);
 				efree(pkey);
 				pefree(ctx->socket,1);
@@ -248,6 +267,7 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 
 		GB_SOCK_CONNECT(ret, ctx->socket, host, port, timeout);
 		if (ret != 0) {
+			GB_SOCK_ERROR(ctx, host, port, "connect to");
 			gb_debug("connection failed: %d", ctx->socket->error);
 			efree(ctx->socket);
 			efree(ctx);
