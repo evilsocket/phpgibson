@@ -37,7 +37,15 @@
 typedef struct {
 	int id;
 	gbClient *socket;
+	zend_bool persistent;
 } gbContext;
+
+static zend_object_handlers php_gibson_client_handlers;
+
+typedef struct _php_gibson_client {
+	zend_object std;
+	gbContext *ctx;
+} php_gibson_client;
 
 int le_gibson_sock;
 int le_gibson_psock;
@@ -90,7 +98,7 @@ static void gibson_socket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* {
 
 	gb_debug("socket destructor %d", ctx->id);
 
-	gb_disconnect(ctx->socket TSRMLS_CC);
+	gb_disconnect(ctx->socket);
 
 	efree(ctx->socket);
 	efree(ctx);
@@ -103,10 +111,53 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* 
 
 	gb_debug("psocket destructor %d", ctx->id);
 
-	gb_disconnect(ctx->socket TSRMLS_CC);
+	gb_disconnect(ctx->socket);
 
 	pefree(ctx->socket,1);
 	pefree(ctx,1);
+}
+/* }}} */
+
+static void php_gibson_client_obj_dtor(void *object TSRMLS_DC) /* {{{ */
+{
+	php_gibson_client *c = (php_gibson_client *)object;
+
+	if (c) {
+		if (c->ctx) {
+			if (c->ctx->id >= 0) {
+				zend_list_delete(c->ctx->id);
+			}
+			efree(c->ctx);
+		}
+		zend_object_std_dtor(&c->std TSRMLS_CC);
+		efree(c);
+	}
+}
+/* }}} */
+
+static zend_object_value php_gibson_client_new(zend_class_entry *ce TSRMLS_DC) /* {{{ */
+{
+	php_gibson_client *c;
+	zend_object_value retval;
+#if PHP_VERSION_ID < 50399
+	zval *tmp;
+#endif
+
+	c = ecalloc(1, sizeof(*c));
+	zend_object_std_init(&c->std, ce TSRMLS_CC);
+
+	if (!c->std.properties) {
+		ALLOC_HASHTABLE(c->std.properties);
+		zend_hash_init(c->std.properties, 0, NULL, ZVAL_PTR_DTOR, 0);
+	}
+#if PHP_VERSION_ID < 50399
+	zend_hash_copy(c->std.properties, &ce->default_properties, (copy_ctor_func_t) zval_add_ref, (void *) &tmp, sizeof(zval *));
+#else
+	object_properties_init(&c->std, ce);
+#endif
+	retval.handle = zend_objects_store_put(c, (zend_objects_store_dtor_t)zend_objects_destroy_object, php_gibson_client_obj_dtor, NULL TSRMLS_CC);
+	retval.handlers = &php_gibson_client_handlers;
+	return retval;
 }
 /* }}} */
 
@@ -129,7 +180,7 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* 
 
 
 #define GB_SOCK_CONNECT(ret, sock, host, port, timeout)	\
-	gb_disconnect((sock) TSRMLS_CC);						\
+	gb_disconnect((sock));						\
 	if (GB_IS_UNIX_SOCKET(host)) {							\
 		(ret) = gb_unix_connect((sock), (host), (timeout)); \
 	} else {												\
@@ -141,6 +192,19 @@ static void gibson_psocket_destructor(zend_rsrc_list_entry * rsrc TSRMLS_DC) /* 
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s socket '%s': %s (%d)", (action), (host), strerror((ctx)->socket->error), (ctx)->socket->error);	\
 	} else {																														\
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s '%s:%ld': %s (%d)", (action), (host), (port), strerror((ctx)->socket->error), (ctx)->socket->error);	\
+	}
+
+#define PHP_GIBSON_INITIALIZED(c)																	\
+	if (!(c) || !(c)->ctx) {																		\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "using uninitialized Gibson client object");	\
+		RETURN_FALSE;																				\
+	}
+
+#define PHP_GIBSON_CONNECTED(c)																		\
+	PHP_GIBSON_INITIALIZED(c);																		\
+	if ((c)->ctx->socket == NULL) {																	\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "using unconnected Gibson client object");		\
+		RETURN_FALSE;																				\
 	}
 
 /* get a persistent socket identifier */
@@ -159,32 +223,46 @@ static void gibson_socket_pid(char *address, int port, int timeout, char **pkey,
 
 PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ */
 {
-	zval *object;
-	int host_len, id, ret, pkey_len = 0;
+	php_gibson_client *c;
+	int host_len, ret, pkey_len = 0;
 	char *host = NULL, *pkey = NULL;
 	long port = -1;
 	zend_rsrc_list_entry *le, new_le;
 	long timeout = 100;
-	gbClient *sock = NULL;
 	gbContext *ctx = NULL;
 	int type;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os|ll", &object, gibson_ce, &host, &host_len, &port, &timeout) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|ll", &host, &host_len, &port, &timeout) == FAILURE) {
 		return FAILURE;
 	}
-	else if (host_len == 0) {
+
+	if (host_len == 0) {
 		return FAILURE;
 	}
-	else if (timeout < 0L || timeout > INT_MAX) {
+
+	if (timeout < 0L || timeout > INT_MAX) {
 		return FAILURE;
 	}
+
 	/* not unix socket, set to default value */
-	else if (port == -1 && host_len && GB_IS_UNIX_SOCKET(host) == 0) {
+	if (port == -1 && host_len && GB_IS_UNIX_SOCKET(host) == 0) {
 		port = 10128;
 	}
 
-	if (persistent)
-	{
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+
+	if (!c || !c->ctx) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "using uninitialized Gibson client object");
+		return FAILURE;
+	}
+
+	if (c->ctx && c->ctx->id >= 0) {
+		/* close existing connection */
+		zend_list_delete(c->ctx->id);
+		c->ctx->socket = NULL;
+	}
+
+	if (persistent) {
 		gibson_socket_pid(host, port, timeout, &pkey, &pkey_len);
 
 		/* search for persistent connections */
@@ -221,7 +299,11 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 					}
 				}
 
-				add_property_resource(object, "socket", ctx->id);
+				php_printf("reusing existing persistent connection\n");
+
+				c->ctx->id = ctx->id;
+				c->ctx->socket = ctx->socket;
+
 				efree(pkey);
 				return SUCCESS;
 			}
@@ -250,7 +332,9 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 			zend_hash_update(&EG(persistent_list), pkey, pkey_len + 1, &new_le, sizeof(zend_rsrc_list_entry), NULL);
 
 			ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_psock);
-			add_property_resource(object, "socket", ctx->id);
+
+			c->ctx->id = ctx->id;
+			c->ctx->socket = ctx->socket;
 		}
 
 		gb_debug("succesfully created persistent connection ( id %d )", ctx->id);
@@ -275,8 +359,9 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 		}
 
 		ctx->id = ZEND_REGISTER_RESOURCE(NULL, ctx, le_gibson_sock);
-		add_property_resource(object, "socket", ctx->id);
 
+		c->ctx->id = ctx->id;
+		c->ctx->socket = ctx->socket;
 		gb_debug("succesfully created connection ( id %d )", ctx->id);
 
 		return SUCCESS;
@@ -287,24 +372,36 @@ PHPAPI int gibson_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent)  /* {{{ 
 
 static PHP_METHOD(Gibson, __construct)  /* {{{ */
 {
+	php_gibson_client *c;
+
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
+
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+
+	/* called the __construct() twice */
+	if (c->ctx) {
+		return;
+	}
+
+	c->ctx = ecalloc(1, sizeof(gbContext));
+	c->ctx->id = -1;
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, getLastError)  /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
+	php_gibson_client *c;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	switch(sock->error)
+	switch(c->ctx->socket->error)
 	{
 		case REPL_ERR 	        : RETURN_STRING("Generic error", 1);
 		case REPL_ERR_NOT_FOUND : RETURN_STRING("Invalid key, item not found", 1);
@@ -313,20 +410,8 @@ static PHP_METHOD(Gibson, getLastError)  /* {{{ */
 		case REPL_ERR_LOCKED    : RETURN_STRING("The item is locked", 1);
 
 		default:
-								  RETURN_STRING(strerror(sock->error), 1);
+								  RETURN_STRING(strerror(c->ctx->socket->error), 1);
 	}
-}
-/* }}} */
-
-static PHP_METHOD(Gibson,__destruct)  /* {{{ */
-{
-	gbClient *sock;
-
-	if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
 }
 /* }}} */
 
@@ -350,145 +435,128 @@ static PHP_METHOD(Gibson, pconnect) /* {{{ */
 }
 /* }}} */
 
-#define PHP_GIBSON_RETURN_REPLY()									\
-	if (sock->reply.encoding == GB_ENC_PLAIN) {						\
-		RETURN_STRINGL( sock->reply.buffer, sock->reply.size, 1);	\
-	} else if (sock->reply.encoding == GB_ENC_NUMBER) {			\
-		RETURN_LONG(gb_reply_number(sock));						\
-	} else {														\
-		RETURN_FALSE;												\
+#define PHP_GIBSON_RETURN_REPLY(c)												\
+	if ((c)->ctx->socket->reply.encoding == GB_ENC_PLAIN) {						\
+		RETURN_STRINGL((char *)(c)->ctx->socket->reply.buffer, (c)->ctx->socket->reply.size, 1);		\
+	} else if ((c)->ctx->socket->reply.encoding == GB_ENC_NUMBER) {							\
+		RETURN_LONG(gb_reply_number((c)->ctx->socket));										\
+	} else {																	\
+		RETURN_FALSE;															\
 	}
 
 static PHP_METHOD(Gibson, set) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL, *val = NULL;
+	php_gibson_client *c;
+	char *key, *val;
 	int key_len, val_len;
 	long expire = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Oss|l", &object, gibson_ce, &key, &key_len, &val, &val_len, &expire) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l", &key, &key_len, &val, &val_len, &expire) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_set(sock, key, key_len, val, val_len, expire) != 0)
+	if (gb_set(c->ctx->socket, key, key_len, val, val_len, expire) != 0) {
 		RETURN_FALSE;
+	}
 
-	PHP_GIBSON_RETURN_REPLY();
+	PHP_GIBSON_RETURN_REPLY(c);
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, mset) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL, *val = NULL;
+	php_gibson_client *c;
+	char *key, *val;
 	int key_len, val_len;
-	long expire = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Oss", &object, gibson_ce, &key, &key_len, &val, &val_len) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss", &key, &key_len, &val, &val_len) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_mset(sock, key, key_len, val, val_len) != 0)
+	if (gb_mset(c->ctx->socket, key, key_len, val, val_len) != 0) {
 		RETURN_FALSE;
+	}
 
-	PHP_GIBSON_RETURN_REPLY();
+	PHP_GIBSON_RETURN_REPLY(c);
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, ttl) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
+	php_gibson_client *c;
+	char *key;
 	int key_len;
 	long expire = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Osl", &object, gibson_ce, &key, &key_len, &expire) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &key, &key_len, &expire) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_ttl(sock, key, key_len, expire) != 0)
+	if (gb_ttl(c->ctx->socket, key, key_len, expire) != 0) {
 		RETURN_FALSE;
-
+	}
 	RETURN_TRUE;
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, mttl) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
+	php_gibson_client *c;
+	char *key;
 	int key_len;
 	long expire = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Osl", &object, gibson_ce, &key, &key_len, &expire) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &key, &key_len, &expire) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_mttl(sock, key, key_len, expire) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, get) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
+	if (gb_mttl(c->ctx->socket, key, key_len, expire) != 0) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_get(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
+	PHP_GIBSON_RETURN_REPLY(c);
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, mget) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
+	php_gibson_client *c;
+	char *key;
 	int key_len, i;
 	gbMultiBuffer mb;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &key, &key_len) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_mget(sock, key, key_len) != 0)
+	if (gb_mget(c->ctx->socket, key, key_len) != 0) {
 		RETURN_FALSE;
+	}
 
-	gb_reply_multi(sock, &mb);
+	gb_reply_multi(c->ctx->socket, &mb);
 
 	array_init(return_value);
 
 	for (i = 0; i < mb.count; i++) {
 		if (mb.values[i].encoding == GB_ENC_PLAIN) {
-			add_assoc_stringl(return_value, mb.keys[i], mb.values[i].buffer, mb.values[i].size, 1);
+			add_assoc_stringl(return_value, mb.keys[i], (char *)mb.values[i].buffer, mb.values[i].size, 1);
 		}
-		else if (sock->reply.encoding == GB_ENC_NUMBER) {
+		else if (c->ctx->socket->reply.encoding == GB_ENC_NUMBER) {
 			add_assoc_long(return_value, mb.keys[i], *(long *)mb.values[i].buffer);
 		}
 	}
@@ -497,142 +565,89 @@ static PHP_METHOD(Gibson, mget) /* {{{ */
 }
 /* }}} */
 
-static PHP_METHOD(Gibson, del) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_del(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	RETURN_TRUE;
+#define GIBSON_KEY_ONLY_METHOD_BOOL(name)		\
+static PHP_METHOD(Gibson, name)				\
+{											\
+	php_gibson_client *c;					\
+	char *key;								\
+	int key_len;							\
+											\
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &key, &key_len) == FAILURE) { \
+		RETURN_FALSE;						\
+	}										\
+											\
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);	\
+	PHP_GIBSON_CONNECTED(c);				\
+											\
+	if (gb_ ##name(c->ctx->socket, key, key_len) != 0) { \
+		RETURN_FALSE;						\
+	}										\
+	RETURN_TRUE;							\
 }
-/* }}} */
 
-static PHP_METHOD(Gibson, mdel) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_mdel(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
+#define GIBSON_KEY_ONLY_METHOD_VALUE(name)	\
+static PHP_METHOD(Gibson, name)				\
+{											\
+	php_gibson_client *c;					\
+	char *key;								\
+	int key_len;							\
+											\
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &key, &key_len) == FAILURE) { \
+		RETURN_FALSE;						\
+	}										\
+											\
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);	\
+	PHP_GIBSON_CONNECTED(c);				\
+											\
+	if (gb_ ##name(c->ctx->socket, key, key_len) != 0) { \
+		RETURN_FALSE;						\
+	}										\
+	PHP_GIBSON_RETURN_REPLY(c);				\
 }
-/* }}} */
 
-static PHP_METHOD(Gibson, inc) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
+GIBSON_KEY_ONLY_METHOD_VALUE(get);
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
+GIBSON_KEY_ONLY_METHOD_BOOL(del);
 
-	GET_SOCKET_RESOURCE(sock);
+GIBSON_KEY_ONLY_METHOD_VALUE(mdel);
 
-	if (gb_inc(sock, key, key_len) != 0)
-		RETURN_FALSE;
+GIBSON_KEY_ONLY_METHOD_VALUE(inc);
 
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
+GIBSON_KEY_ONLY_METHOD_VALUE(minc);
 
-static PHP_METHOD(Gibson, minc) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
+GIBSON_KEY_ONLY_METHOD_VALUE(dec);
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
+GIBSON_KEY_ONLY_METHOD_VALUE(mdec);
 
-	GET_SOCKET_RESOURCE(sock);
+GIBSON_KEY_ONLY_METHOD_BOOL(unlock);
 
-	if (gb_minc(sock, key, key_len) != 0)
-		RETURN_FALSE;
+GIBSON_KEY_ONLY_METHOD_VALUE(munlock);
 
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
+GIBSON_KEY_ONLY_METHOD_VALUE(count);
 
-static PHP_METHOD(Gibson, dec) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
+GIBSON_KEY_ONLY_METHOD_VALUE(sizeof);
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
+GIBSON_KEY_ONLY_METHOD_VALUE(msizeof);
 
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_dec(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, mdec) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_mdec(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
+GIBSON_KEY_ONLY_METHOD_VALUE(encof);
 
 static PHP_METHOD(Gibson, lock) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
+	php_gibson_client *c;
+	char *key;
 	int key_len;
 	long time = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Osl", &object, gibson_ce, &key, &key_len, &time) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &key, &key_len, &time) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_lock(sock, key, key_len, time) != 0)
+	if (gb_lock(c->ctx->socket, key, key_len, time) != 0) {
 		RETURN_FALSE;
+	}
 
 	RETURN_TRUE;
 }
@@ -640,169 +655,50 @@ static PHP_METHOD(Gibson, lock) /* {{{ */
 
 static PHP_METHOD(Gibson, mlock) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
+	php_gibson_client *c;
+	char *key;
 	int key_len;
 	long time = -1;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Osl", &object, gibson_ce, &key, &key_len, &time) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &key, &key_len, &time) == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_mlock(sock, key, key_len, time) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, unlock) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
+	if (gb_mlock(c->ctx->socket, key, key_len, time) != 0) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_unlock(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	RETURN_TRUE;
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, munlock) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_munlock(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, count) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_count(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, sizeof) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_sizeof(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, msizeof) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_msizeof(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
-}
-/* }}} */
-
-static PHP_METHOD(Gibson, encof) /* {{{ */
-{
-	zval *object;
-	gbClient *sock;
-	char *key = NULL;
-	int key_len;
-
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Os", &object, gibson_ce, &key, &key_len ) == FAILURE) {
-		RETURN_FALSE;
-	}
-
-	GET_SOCKET_RESOURCE(sock);
-
-	if (gb_encof(sock, key, key_len) != 0)
-		RETURN_FALSE;
-
-	PHP_GIBSON_RETURN_REPLY();
+	PHP_GIBSON_RETURN_REPLY(c);
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, stats) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
+	php_gibson_client *c;
 	int i;
 	gbMultiBuffer mb;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_stats(sock) != 0) {
+	if (gb_stats(c->ctx->socket) != 0) {
 		RETURN_FALSE;
 	}
 
-	gb_reply_multi(sock, &mb);
+	gb_reply_multi(c->ctx->socket, &mb);
 
 	array_init(return_value);
 
 	for (i = 0; i < mb.count; i++) {
 		if (mb.values[i].encoding == GB_ENC_PLAIN) {
-			add_assoc_stringl(return_value, mb.keys[i], mb.values[i].buffer, mb.values[i].size, 1);
+			add_assoc_stringl(return_value, mb.keys[i], (char *)mb.values[i].buffer, mb.values[i].size, 1);
 		}
 		else if (mb.values[i].encoding == GB_ENC_NUMBER) {
 			add_assoc_long(return_value, mb.keys[i], *(long *)mb.values[i].buffer);
@@ -815,35 +711,36 @@ static PHP_METHOD(Gibson, stats) /* {{{ */
 
 static PHP_METHOD(Gibson, ping) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
+	php_gibson_client *c;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_ping(sock) != 0)
+	if (gb_ping(c->ctx->socket) != 0) {
 		RETURN_FALSE;
-
+	}
 	RETURN_TRUE;
 }
 /* }}} */
 
 static PHP_METHOD(Gibson, quit) /* {{{ */
 {
-	zval *object;
-	gbClient *sock;
+	php_gibson_client *c;
 
-	if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "O", &object, gibson_ce ) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		RETURN_FALSE;
 	}
 
-	GET_SOCKET_RESOURCE(sock);
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
 
-	if (gb_quit(sock) != 0)
+	if (gb_quit(c->ctx->socket) != 0) {
 		RETURN_FALSE;
+	}
 
 	RETURN_TRUE;
 }
@@ -851,7 +748,6 @@ static PHP_METHOD(Gibson, quit) /* {{{ */
 
 static zend_function_entry gibson_functions[] = { /* {{{ */
 	PHP_ME(Gibson, __construct, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, __destruct, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, getLastError, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, connect, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, pconnect, NULL, ZEND_ACC_PUBLIC)
@@ -886,9 +782,13 @@ static PHP_MINIT_FUNCTION(gibson) /* {{{ */
 {
 	zend_class_entry gibson_class_entry;
 
+	memcpy(&php_gibson_client_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
+	php_gibson_client_handlers.clone_obj = NULL;
+
 	/* Gibson class */
 	INIT_CLASS_ENTRY(gibson_class_entry, "Gibson", gibson_functions);
 	gibson_ce = zend_register_internal_class(&gibson_class_entry TSRMLS_CC);
+	gibson_ce->create_object = php_gibson_client_new;
 
 	le_gibson_sock = zend_register_list_destructors_ex(gibson_socket_destructor, NULL, PHP_GIBSON_SOCK_NAME, module_number);
 
