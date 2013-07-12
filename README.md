@@ -162,9 +162,7 @@ _**Description**_: Disconnects from the Gibson instance.
 1. [unlock](#unlock) - Remove the lock on a given key.
 1. [munlock](#munlock) - Remove the lock on keys verifying the given expression.
 1. [count](#count) - Count items for a given expression.
-1. [sizeof](#sizeof) - Return the size of the value with the given key, if the value is LZF encoded its compressed size is returned.
-1. [msizeof](#msizeof) - Return the total size of values for the given expression, if one or more values are LZF encoded their compressed size is returned.
-1. [encof](#encof) - Return the encoding of the value with the given key.
+1. [meta](#meta) - Obtain a specific information about a given item.
 1. [stats](#stats) - Get system stats about the Gibson instance.
 1. [ping](#ping) - Ping the server instance to refresh client last seen timestamp.
 
@@ -453,56 +451,30 @@ _**Description**_: Count items for a given expression.
 $gibson->count( 'f' ); // Count every f* key
 ~~~
 
-### sizeof
+### meta 
 -----
-_**Description**_: Return the size of the value with the given key, if the value is LZF encoded its compressed size is returned.
+_**Description**_: Obtain a specific information about a given item.
 
 ##### *Parameters*
 *key* (string) The key of the value to search.
+*field* (string) The information name to retrieve, allowed values follow.
+
+- *size* The size in bytes of the item value.
+- *encoding* The value encoding.
+- *access* Timestamp of the last time the item was accessed.
+- *created* Timestamp of item creation.
+- *ttl* Item specified time to live, -1 for infinite ttl.
+- *left* Number of seconds left for the item to live if a ttl was specified, otherwise -1.
+- *lock* Number of seconds the item is locked, -1 if there's no lock.
 
 ##### *Return value*
-*Mixed* An integer with the size in case of success, `FALSE` in case of failure.
+*Mixed* An integer with the value in case of success, `FALSE` in case of failure.
 
 ##### *Example*
 ~~~
 $gibson->set( 'foo', 'bar' );
 
-echo $gibson->sizeof('foo')."\n"; // will print 3
-~~~
-
-### msizeof
------
-_**Description**_: Return the total size of values for the given expression, if one or more values are LZF encoded their compressed size is returned.
-
-##### *Parameters*
-*key* (string) The key prefix to use as expression.
-
-##### *Return value*
-*Mixed* An integer with the total size in case of success, `FALSE` in case of failure.
-
-##### *Example*
-~~~
-$gibson->set( 'foo', 'bar' );
-$gibson->set( 'fu', 'kung' );
-
-echo $gibson->msizeof('f')."\n"; // will print 7
-~~~
-
-### encof
------
-_**Description**_: Return the encoding of the value with the given key ( can be `Gibson::ENC_PLAIN` for strings, `Gibson::ENC_NUMBER` for numbers and `Gibson::ENC_LZF` for LZF compressed items ).
-
-##### *Parameters*
-*key* (string) The key of the value to search.
-
-##### *Return value*
-*Mixed* An integer with the encoding in case of success, `FALSE` in case of failure.
-
-##### *Example*
-~~~
-$gibson->set( 'foo', 'bar' );
-
-echo $gibson->encof('foo')."\n"; // will print 0 which is `Gibson::ENC_PLAIN`
+echo $gibson->meta( 'foo', 'created' )."\n"; // will print the actual timestamp
 ~~~
 
 ### stats

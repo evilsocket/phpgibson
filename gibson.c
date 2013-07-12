@@ -611,12 +611,6 @@ GIBSON_KEY_ONLY_METHOD_VALUE(munlock);
 
 GIBSON_KEY_ONLY_METHOD_VALUE(count);
 
-GIBSON_KEY_ONLY_METHOD_VALUE(sizeof);
-
-GIBSON_KEY_ONLY_METHOD_VALUE(msizeof);
-
-GIBSON_KEY_ONLY_METHOD_VALUE(encof);
-
 static PHP_METHOD(Gibson, lock) /* {{{ */
 {
 	php_gibson_client *c;
@@ -654,6 +648,27 @@ static PHP_METHOD(Gibson, mlock) /* {{{ */
 	PHP_GIBSON_CONNECTED(c);
 
 	if (gb_mlock(c->ctx->socket, key, key_len, time) != 0) {
+		RETURN_FALSE;
+	}
+
+	PHP_GIBSON_RETURN_REPLY(c);
+}
+/* }}} */
+
+static PHP_METHOD(Gibson, meta) /* {{{ */
+{
+	php_gibson_client *c;
+	char *key, *meta;
+	int key_len, meta_len;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss", &key, &key_len, &meta, &meta_len) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
+
+	if (gb_meta(c->ctx->socket, key, key_len, meta, meta_len) != 0) {
 		RETURN_FALSE;
 	}
 
@@ -754,9 +769,7 @@ static zend_function_entry gibson_functions[] = { /* {{{ */
 	PHP_ME(Gibson, unlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, sizeof, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, msizeof, NULL, ZEND_ACC_PUBLIC)
-	PHP_ME(Gibson, encof, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, meta, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
