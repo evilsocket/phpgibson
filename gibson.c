@@ -425,7 +425,7 @@ static PHP_METHOD(Gibson, pconnect) /* {{{ */
 	if ((c)->ctx->socket->reply.encoding == GB_ENC_PLAIN) {						\
 		RETURN_STRINGL((char *)(c)->ctx->socket->reply.buffer, (c)->ctx->socket->reply.size, 1);		\
 	} else if ((c)->ctx->socket->reply.encoding == GB_ENC_NUMBER) {							\
-		RETURN_LONG(gb_reply_number((c)->ctx->socket));										\
+		RETURN_LONG(gb_reply_number(&(c)->ctx->socket->reply));										\
 	} else {																	\
 		RETURN_FALSE;															\
 	}
