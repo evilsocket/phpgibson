@@ -164,6 +164,7 @@ _**Description**_: Disconnects from the Gibson instance.
 1. [count](#count) - Count items for a given expression.
 1. [meta](#meta) - Obtain a specific information about a given item.
 1. [stats](#stats) - Get system stats about the Gibson instance.
+1. [keys](#keys) - Return a list of keys matching the given prefix.
 1. [ping](#ping) - Ping the server instance to refresh client last seen timestamp.
 
 ### getLastError
@@ -508,6 +509,24 @@ Array
     [memory_peak] => 1772
     [item_size_avg] => 1772
 )
+~~~
+
+### keys 
+-----
+_**Description**_: Return a list of keys matching the given prefix.
+
+##### *Parameters*
+*prefix* (string) The key prefix to use as expression.
+
+##### *Return value*
+*Mixed* The list of matching keys, `FALSE` in case of failure.
+
+##### *Example*
+~~~
+$gibson->set( 'app:count:a', 1 );
+$gibson->set( 'app:count:b', 2 );
+
+$gibson->keys( 'app:count:' ); // Will return an array with both keys.
 ~~~
 
 ### ping

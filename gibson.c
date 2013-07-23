@@ -676,6 +676,41 @@ static PHP_METHOD(Gibson, meta) /* {{{ */
 }
 /* }}} */
 
+static PHP_METHOD(Gibson, keys) /* {{{ */
+{
+	php_gibson_client *c;
+	char *key;
+	int key_len, i;
+	gbMultiBuffer mb;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &key, &key_len) == FAILURE) {
+		RETURN_FALSE;
+	}
+
+	c = (php_gibson_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	PHP_GIBSON_CONNECTED(c);
+
+	if (gb_keys(c->ctx->socket, key, key_len) != 0) {
+		RETURN_FALSE;
+	}
+
+	gb_reply_multi(c->ctx->socket, &mb);
+
+	array_init(return_value);
+
+	for (i = 0; i < mb.count; i++) {
+		if (mb.values[i].encoding == GB_ENC_PLAIN) {
+			add_assoc_stringl(return_value, mb.keys[i], (char *)mb.values[i].buffer, mb.values[i].size, 1);
+		}
+		else if (mb.values[i].encoding == GB_ENC_NUMBER) {
+			add_assoc_long(return_value, mb.keys[i], *(long *)mb.values[i].buffer);
+		}
+	}
+
+	gb_reply_multi_free(&mb);
+}
+/* }}} */
+
 static PHP_METHOD(Gibson, stats) /* {{{ */
 {
 	php_gibson_client *c;
@@ -770,6 +805,7 @@ static zend_function_entry gibson_functions[] = { /* {{{ */
 	PHP_ME(Gibson, munlock, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, count, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, meta, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(Gibson, keys, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, stats, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, ping, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(Gibson, quit, NULL, ZEND_ACC_PUBLIC)
