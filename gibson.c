@@ -173,10 +173,12 @@ static zend_object_value php_gibson_client_new(zend_class_entry *ce TSRMLS_DC) /
 	}
 
 #define GB_SOCK_ERROR(ctx, host, port, action)																						\
+	char __sock_err_buff[0xFF] = {0}; \
+	gb_getlasterror( __sock_err_buff, 0xFF ); \
 	if (GB_IS_UNIX_SOCKET((host))) {																								\
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s socket '%s': %s (%d)", (action), (host), strerror((ctx)->socket->error), (ctx)->socket->error);	\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s socket '%s': %s", (action), (host), __sock_err_buff );	\
 	} else {																														\
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s '%s:%ld': %s (%d)", (action), (host), (port), strerror((ctx)->socket->error), (ctx)->socket->error);	\
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to %s '%s:%ld': %s", (action), (host), (port), __sock_err_buff);	\
 	}
 
 #define PHP_GIBSON_INITIALIZED(c)																	\
